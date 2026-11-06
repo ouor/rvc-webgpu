@@ -2,7 +2,7 @@
 import { AppError } from '../shared/errors';
 import type { DownloadItem } from '../shared/types';
 import { readPth, type Pth } from '../formats/pth';
-import { download, readVerified, sha256Hex, type BlobStore } from './store';
+import { blobChunks, download, readVerified, sha256Hex, type BlobStore } from './store';
 import { checkManifest, type Manifest } from './loader';
 
 export interface PublicModel { graph: string; weights: string; manifest: string }
@@ -72,10 +72,7 @@ export class ModelRepo {
     if (hits.length !== 1) return { status: 'unknown' }; // none, or an ambiguous basename
     const path = hits[0], m = this.meta(path);
     if (file.size !== m.bytes || (await sha256Hex(file)) !== m.sha256) return { path, status: 'mismatch' };
-    await this.store.write(this.local(path), (async function* () {
-      const r = file.stream().getReader();
-      for (;;) { const { done, value } = await r.read(); if (done) return; yield value; }
-    })());
+    await this.store.write(this.local(path), blobChunks(file));
     return { path, status: 'imported' };
   }
 

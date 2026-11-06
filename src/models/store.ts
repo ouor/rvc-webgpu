@@ -10,27 +10,64 @@ export interface BlobStore {
   list(prefix: string): Promise<{ path: string; bytes: number }[]>;
 }
 
+/**
+ * A Blob's bytes as chunks for BlobStore.write (ReadableStream is not async-iterable in Safari).
+ * Never pass a Blob read from the same path you write: OPFS truncates first (see models/my-models.ts).
+ */
+export async function* blobChunks(b: Blob): AsyncIterable<Uint8Array> {
+  const r = b.stream().getReader();
+  try { for (;;) { const { done, value } = await r.read(); if (done) return; yield value; } }
+  finally { r.releaseLock(); }
+}
+
 const notFound = (p: string) => new AppError('NOT_FOUND', `no stored file ${p}`);
 const isQuota = (e: unknown) => e instanceof DOMException && e.name === 'QuotaExceededError';
 
+/**
+ * In-memory store with OPFS semantics where they matter: write() truncates before it consumes its chunks, and a Blob
+ * returned by read() becomes unreadable (NotReadableError) once its file is written or removed, like an OPFS File.
+ */
 export class MemoryStore implements BlobStore {
   private files = new Map<string, Uint8Array[]>();
+  private gen = new Map<string, number>();
+  private touch(p: string) { this.gen.set(p, (this.gen.get(p) ?? 0) + 1); }
   async has(p: string) { return this.files.has(p); }
-  async read(p: string) {
+  async read(p: string): Promise<Blob> {
     const f = this.files.get(p);
     if (!f) throw notFound(p);
-    return new Blob(f as Uint8Array<ArrayBuffer>[]);
+    const g = this.gen.get(p) ?? 0;
+    return snapshot(new Blob(f.map((c) => c.slice())), () => (this.gen.get(p) ?? 0) === g, p);
   }
   async write(p: string, chunks: AsyncIterable<Uint8Array> | Iterable<Uint8Array>, append = false) {
     const parts = append ? (this.files.get(p) ?? []) : [];
     this.files.set(p, parts);
+    this.touch(p);
     for await (const c of chunks) parts.push(c.slice());
   }
   async size(p: string) { return (this.files.get(p) ?? []).reduce((a, c) => a + c.length, 0); }
-  async remove(p: string) { for (const k of [...this.files.keys()]) if (k === p || k.startsWith(p.replace(/\/?$/, '/'))) this.files.delete(k); }
+  async remove(p: string) {
+    for (const k of [...this.files.keys()]) if (k === p || k.startsWith(p.replace(/\/?$/, '/'))) { this.files.delete(k); this.touch(k); }
+  }
   async list(prefix: string) {
     return Promise.all([...this.files.keys()].filter((k) => k.startsWith(prefix)).map(async (path) => ({ path, bytes: await this.size(path) })));
   }
+}
+
+/** Blob whose reads fail once `valid()` turns false (OPFS File snapshot behaviour). */
+function snapshot(b: Blob, valid: () => boolean, p: string): Blob {
+  const check = () => { if (!valid()) throw new DOMException(`${p} changed after it was read`, 'NotReadableError'); };
+  return new Proxy(b, {
+    get(t, k) {
+      if (k === 'arrayBuffer' || k === 'text' || k === 'bytes') return async () => { check(); return (t as unknown as Record<string, () => Promise<unknown>>)[k](); };
+      if (k === 'stream') return () => {
+        const r = t.stream().getReader();
+        return new ReadableStream({ async pull(c) { try { check(); } catch (e) { c.error(e); return; } const x = await r.read(); if (x.done) c.close(); else c.enqueue(x.value); } });
+      };
+      if (k === 'slice') return (...a: Parameters<Blob['slice']>) => snapshot(t.slice(...a), valid, p);
+      const v = Reflect.get(t, k, t);
+      return typeof v === 'function' ? v.bind(t) : v;
+    },
+  });
 }
 
 type Dir = FileSystemDirectoryHandle;

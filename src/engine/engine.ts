@@ -2,7 +2,7 @@
 // No DOM here; storage and fetch are injected so the same code runs in vitest (Node).
 import { AppError, toAppError } from '../shared/errors';
 import type {
-  Backend, CacheEntry, Engine, ImportResult, IndexInfo, JobResult, JobSpec, Mono, OnProgress, RvcModelInfo, SavedModel, StageId, Stereo,
+  Backend, CacheEntry, Engine, ImportResult, IndexInfo, JobResult, JobSpec, Mono, OnProgress, RvcModelInfo, StageId, Stereo,
 } from '../shared/types';
 import { createPrng } from '../dsp/prng';
 import { resample } from '../dsp/resample';
@@ -12,8 +12,10 @@ import { readOnnxInfo, type OnnxInfo } from '../formats/onnx-meta';
 import { readRvcCheckpoint, type RvcCheckpoint } from '../formats/rvc-checkpoint';
 import { configureOrt, pickBackend, probeGpu, releaseSession, type OrtSession } from '../models/ort';
 import { createSessionFromParts, tensorMap } from '../models/loader';
-import { loadRegistry, ModelRepo, type Opened, type PublicId } from '../models/registry';
-import { MemoryStore, sha256Hex, type BlobStore } from '../models/store';
+import { loadRegistry, ModelRepo, type Opened, type PublicId, type Registry } from '../models/registry';
+import { MemoryStore, type BlobStore } from '../models/store';
+import { modelIdOf, MyModelStore } from '../models/my-models';
+import { publicDir } from '../models/layout';
 import { CancelFlag, type RunCtx } from './ctx';
 import { checkVrParams, separateVR, type VrBandParams, type VrMeta } from './separate/vr';
 import { extractF0 } from './rvc/f0';
@@ -21,14 +23,16 @@ import { extractFeatures } from './rvc/features';
 import { createOnnxNet, createTemplateNet, describeOnnx, type RvcNet } from './rvc/net';
 import { prepareConvert, synthesizeAll, type ConvertCache } from './rvc/pipeline';
 
-export interface EngineDeps { store?: BlobStore; fetch?: typeof fetch }
+/** Injection points for tests: storage, network, and a registry in place of the bundled/fetched one. */
+export interface EngineDeps { store?: BlobStore; fetch?: typeof fetch; registry?: Registry }
 
+// `stored` = my-model id when `file` is that saved model's OPFS file (see myModels.remove).
 type LoadedModel =
-  | { kind: 'pth'; info: RvcModelInfo; ckpt: RvcCheckpoint; file: Blob; indexFile?: Blob }
-  | { kind: 'onnx'; info: RvcModelInfo; bytes: Uint8Array; onnx: OnnxInfo; file: Blob; indexFile?: Blob };
+  | { kind: 'pth'; info: RvcModelInfo; ckpt: RvcCheckpoint; file: Blob; indexFile?: Blob; stored?: string }
+  | { kind: 'onnx'; info: RvcModelInfo; bytes: Uint8Array; onnx: OnnxInfo; file: Blob; indexFile?: Blob; stored?: string };
 
 const MAX_SECONDS = 20 * 60; // IN-3 hard limit
-const idOf = async (b: Blob) => (await sha256Hex(b)).slice(0, 16);
+const idOf = modelIdOf;
 const baseName = (n: string) => n.replace(/\.[^.]+$/, '');
 
 export function createEngine(deps: EngineDeps = {}): Engine {
@@ -42,6 +46,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
   const inputs = new Map<string, Stereo>();
   const models = new Map<string, LoadedModel>();
   const indexes = new Map<string, { info: IndexInfo; index: IvfIndex; file: Blob }>();
+  const mine = new MyModelStore(() => store);
   let sep: { key: string; vocals: Stereo; instrumental: Stereo } | undefined;
   let conv: { key: string; cache: ConvertCache } | undefined;
 
@@ -216,13 +221,6 @@ export function createEngine(deps: EngineDeps = {}): Engine {
     return info;
   }
 
-  const myDir = (id: string) => `my-models/${id}`;
-  const readSaved = async (id: string): Promise<SavedModel> => {
-    const s = JSON.parse(await (await store.read(`${myDir(id)}/info.json`)).text()) as SavedModel;
-    return { ...s, savedAt: s.savedAt ?? 0, lastUsed: s.lastUsed ?? s.savedAt ?? 0 }; // entries saved before these fields
-  };
-  const writeSaved = (s: SavedModel) => store.write(`${myDir(s.id)}/info.json`, [new TextEncoder().encode(JSON.stringify(s))]);
-
   const engine: Engine = {
     async init({ backend: pref, modelBaseUrl }) {
       if (!deps.store && typeof navigator !== 'undefined' && navigator.storage && 'getDirectory' in navigator.storage) {
@@ -233,7 +231,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       backend = pickBackend(pref, gpu);
       const threads = configureOrt();
       const base = new URL(modelBaseUrl, globalThis.location?.href).href; // '/models/' is relative to the app origin
-      repo = new ModelRepo(await loadRegistry(base, fetchFn), store, base, fetchFn);
+      repo = new ModelRepo(deps.registry ?? (await loadRegistry(base, fetchFn)), store, base, fetchFn);
       await repo.pruneOldRevisions().catch(() => {});
       const est = (await navigator.storage?.estimate?.().catch(() => undefined)) ?? {};
       const persisted = (await navigator.storage?.persisted?.().catch(() => false)) ?? false;
@@ -323,7 +321,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       async list() {
         const r = needRepo();
         const out: CacheEntry[] = [];
-        const pub = `public/${r.reg.revision}/`;
+        const pub = publicDir(r.reg.revision);
         const stored = new Map((await store.list(pub)).map((f) => [f.path, f.bytes]));
         for (const id of r.ids()) {
           let bytes = 0, complete = true;
@@ -334,22 +332,13 @@ export function createEngine(deps: EngineDeps = {}): Engine {
           }
           if (bytes) out.push({ id, name: r.label(id), bytes, kind: 'public', status: complete ? 'verified' : 'incomplete' });
         }
-        const mine = new Map<string, number>();
-        for (const f of await store.list('my-models/')) { const id = f.path.split('/')[1]; mine.set(id, (mine.get(id) ?? 0) + f.bytes); }
-        for (const [id, bytes] of mine) {
-          const saved = await readSaved(id).catch(() => undefined);
-          const ok = !!saved && (await store.has(`${myDir(id)}/model.${saved.source}`));
-          out.push({ id, name: saved?.name ?? id, bytes, kind: 'my-model', status: ok ? 'verified' : 'incomplete' });
-        }
+        for (const m of await mine.sizes()) out.push({ id: m.id, name: m.name, bytes: m.bytes, kind: 'my-model', status: m.complete ? 'verified' : 'incomplete' });
         return out;
       },
       async verify(id) {
         const r = needRepo();
         if (r.ids().includes(id)) return r.verify(id);
-        const saved = await readSaved(id).catch(() => undefined);
-        const file = saved && `${myDir(id)}/model.${saved.source}`;
-        if (!file || !(await store.has(file))) return 'incomplete';
-        return (await idOf(await store.read(file))) === id ? 'verified' : 'corrupt'; // my-model id = file hash prefix
+        return mine.verify(id);
       },
       async importFiles(files) {
         const r = needRepo();
@@ -362,9 +351,8 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       },
       async remove(id) { // public model id or my-model id, as cache.list() returns them
         const r = needRepo();
-        let files: string[];
-        try { files = r.files(id); } catch { return store.remove(myDir(id)); }
-        for (const f of files) await store.remove(`public/${r.reg.revision}/${f}`);
+        if (r.ids().includes(id)) { for (const f of r.files(id)) await store.remove(publicDir(r.reg.revision) + f); }
+        else await engine.myModels.remove(id);
       },
       async clear() { await store.remove('public'); },
     },
@@ -372,47 +360,45 @@ export function createEngine(deps: EngineDeps = {}): Engine {
     myModels: {
       async save(modelId, indexId) {
         const m = get(models, modelId, 'model');
-        const idx = indexId ? get(indexes, indexId, 'index').file : m.indexFile;
-        const dir = myDir(modelId);
-        const stream = async function* (b: Blob) { const r = b.stream().getReader(); for (;;) { const { done, value } = await r.read(); if (done) return; yield value; } };
-        await store.write(`${dir}/model.${m.info.source}`, stream(m.file));
-        if (idx) await store.write(`${dir}/model.index`, stream(idx));
-        else await store.remove(`${dir}/model.index`);
-        const ix = idx ? indexes.get(indexId ?? m.info.indexId ?? '')?.info : undefined;
-        const now = Date.now();
-        await writeSaved({ ...m.info, indexId: ix?.id, index: ix, savedAt: now, lastUsed: now });
+        const ix = indexId ? get(indexes, indexId, 'index') : m.info.indexId ? indexes.get(m.info.indexId) : undefined;
+        await mine.save({ info: m.info, file: m.file }, ix && { info: ix.info, file: ix.file });
       },
-      async list() {
-        const out: SavedModel[] = [];
-        for (const f of await store.list('my-models/')) {
-          if (!f.path.endsWith('/info.json')) continue;
-          try { out.push(await readSaved(f.path.split('/')[1])); } catch { /* skip broken entry */ }
-        }
-        return out.sort((a, b) => b.lastUsed - a.lastUsed);
-      },
+      list: () => mine.list(),
       async rename(id, name) {
-        const saved = await readSaved(id).catch(() => { throw new AppError('NOT_FOUND', `unknown my-model ${id}`); });
-        const n = name.trim() || saved.name;
-        await writeSaved({ ...saved, name: n });
+        const n = await mine.rename(id, name);
         const loaded = models.get(id);
         if (loaded) loaded.info.name = n;
       },
       async open(id) {
-        const dir = myDir(id);
-        const saved = await readSaved(id).catch(() => { throw new AppError('NOT_FOUND', `unknown my-model ${id}`); });
-        const info = await loadModelBlob(await store.read(`${dir}/model.${saved.source}`), `${saved.name}.${saved.source}`);
-        info.name = saved.name;
-        if (saved.source === 'onnx' && !saved.srUnknown) { info.sr = saved.sr; info.srUnknown = false; }
-        if (await store.has(`${dir}/model.index`)) {
-          const f = await store.read(`${dir}/model.index`);
-          info.index = await loadIndexBlob(f);
+        const f = await mine.files(id);
+        const info = await loadModelBlob(f.model, `${f.saved.name}.${f.saved.source}`);
+        const m = models.get(info.id)!;
+        m.stored = id;
+        info.name = f.saved.name;
+        if (f.saved.source === 'onnx' && !f.saved.srUnknown) { info.sr = f.saved.sr; info.srUnknown = false; }
+        if (f.index) {
+          info.index = await loadIndexBlob(f.index);
           info.indexId = info.index.id;
-          models.get(info.id)!.indexFile = f;
+          m.indexFile = f.index;
         }
-        await writeSaved({ ...saved, index: info.index ?? saved.index, lastUsed: Date.now() });
+        await mine.touch(id, info);
         return info;
       },
-      remove: (id) => store.remove(myDir(id)),
+      async remove(id) {
+        // Loaded blobs that are this model's OPFS files would become unreadable: keep a memory copy first,
+        // so the model still runs and can be saved again.
+        for (const m of models.values()) {
+          if (m.stored !== id) continue;
+          m.file = new Blob([await m.file.arrayBuffer()]);
+          if (m.indexFile) {
+            const copy = new Blob([await m.indexFile.arrayBuffer()]);
+            for (const ix of indexes.values()) if (ix.file === m.indexFile) ix.file = copy;
+            m.indexFile = copy;
+          }
+          m.stored = undefined;
+        }
+        await mine.remove(id);
+      },
     },
   };
   return engine;
