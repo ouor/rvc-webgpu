@@ -1,5 +1,7 @@
 // Pure formatting and estimate helpers for the UI.
 import type { Backend, StageId } from '@/shared/types';
+import type { T } from '../i18n';
+import type { Options } from '../store';
 
 export const fmtTime = (s: number) => {
   if (!Number.isFinite(s) || s < 0) s = 0;
@@ -56,3 +58,15 @@ export function download(blob: Blob, name: string) {
 
 /** Filesystem-safe file name part. */
 export const safe = (s: string) => s.replace(/[\\/:*?"<>|]+/g, '_').trim();
+
+export const fmtEta = (t: T, s: number) => (s < 60 ? t('eta.underMin') : t('eta.min', { n: Math.round(s / 60) }));
+export const fmtLeft = (t: T, s: number) => (s < 60 ? t('eta.sec', { n: Math.max(1, Math.round(s / 5) * 5) }) : t('eta.minSec', { m: Math.floor(s / 60), s: Math.round(s % 60) }));
+
+export const hostOf = (url: string) => { try { return new URL(url, location.href).host; } catch { return '?'; } };
+
+/** Rerun: option fields that differ, in display order. */
+const CHANGE_KEYS = ['key', 'indexRate', 'protect', 'rmsMixRate', 'aggressiveness', 'sid'] as const;
+export const changedKeys = (a: Options, b: Options) => CHANGE_KEYS.filter((k) => a[k] !== b[k]);
+const CHANGE_LABEL = { key: 'opt.keyShort', indexRate: 'opt.indexShort', protect: 'opt.protectShort', rmsMixRate: 'opt.rmsShort', aggressiveness: 'opt.aggShort', sid: 'opt.sidShort' } as const;
+export const formatChanges = (t: T, a: Options, b: Options) =>
+  changedKeys(a, b).map((k) => `${t(CHANGE_LABEL[k])} ${k === 'key' ? fmtSigned(a[k]) : a[k]} → ${k === 'key' ? fmtSigned(b[k]) : b[k]}`).join(' · ');

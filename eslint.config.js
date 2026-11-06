@@ -19,6 +19,16 @@ export default tseslint.config(
     },
   },
   { files: ['src/app/**'], rules: deny('**/engine/**', '**/models/**', '**/formats/**', '**/dsp/**') },
+  // UI: components read the store through useApp/selectors and change it only through controller actions (review R2 S-1).
+  {
+    files: ['src/app/components/**'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: ['**/engine/**', '**/models/**', '**/formats/**', '**/dsp/**'].map((g) => ({ group: [g], message: 'layer rule (ARCHITECTURE §4)' })),
+        paths: ['../store', '../../store', '@/app/store'].map((name) => ({ name, importNames: ['set', 'get'], message: 'write the store through a controller action' })),
+      }],
+    },
+  },
   { files: ['src/audio/**'], rules: deny('**/engine/**', '**/models/**', '**/formats/**', '**/app/**') },
   { files: ['src/engine/**', 'src/models/**'], rules: deny('**/app/**', '**/audio/**', 'react', 'react-dom') },
   { files: ['src/formats/**', 'src/dsp/**'], rules: deny('**/app/**', '**/audio/**', '**/engine/**', '**/models/**', 'onnxruntime-web*', 'react') },

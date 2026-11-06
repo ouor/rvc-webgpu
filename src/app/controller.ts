@@ -1,28 +1,28 @@
-// UI actions: the only place that talks to the engine (via engine-client) and to src/audio.
+// UI actions: the only place that talks to the engine (via engine-client) and to src/audio, and the only writer of the store.
 import { toast } from 'sonner';
 import { createEngineClient } from './engine-client';
 import { decodeFile, peaks, toAudioBuffer } from '@/audio/decode';
-import { renderMix } from '@/audio/mixer';
-import { encodeAudio } from '@/audio/wav';
+import { renderMix, type MixParams } from '@/audio/mixer';
+import { encodeAudio, type AudioFormat } from '@/audio/wav';
 import { toAppError } from '@/shared/errors';
-import { DEFAULT_CONVERT, type JobSpec, type Progress, type RvcModelInfo, type Stereo } from '@/shared/types';
-import { AUDIO_EXT, INDEX_EXT, MODEL_EXT, download, extOf, safe, stripExt, fmtSigned, type RunStage } from './lib/format';
-import { confirmAsync, get, isBusy, set, type Job, type Options, type Result, type Step, type StepInfo } from './store';
+import { DEFAULT_CONVERT, DEFAULT_SEPARATE, type BackendPref, type JobSpec, type Progress, type RvcModelInfo, type Stereo } from '@/shared/types';
+import { AUDIO_EXT, INDEX_EXT, MODEL_EXT, download, extOf, safe, stripExt, type RunStage } from './lib/format';
+import { DEFAULT_BASE_URL, STEPS, confirmAsync, get, isBusy, selModelBaseUrl, set, type Job, type Options, type Result, type Settings, type SettingsTab, type Step, type StepInfo } from './store';
+import { version } from '../../package.json';
 import { t } from './i18n';
 
-export const engine = createEngineClient();
+const engine = createEngineClient();
 const RUNNING_FLAG = 'web-rvc:running'; // DESIGN S6: set while processing; still present on load = the tab died
-const STEPS: Step[] = ['separate', 'f0', 'features', 'convert', 'mix'];
 
 // ---------- environment ----------
 
 export async function initEngine() {
   set({ engineReady: false, envError: undefined });
   try {
-    const { backend, modelBaseUrl } = get().settings;
-    const env = await engine.init({ backend, modelBaseUrl });
+    const env = await engine.init({ backend: get().settings.backend, modelBaseUrl: selModelBaseUrl(get()) });
     set({ env, engineReady: true });
     void refreshPlan();
+    void refreshLists();
   } catch (e) {
     set({ envError: toAppError(e) });
   }
@@ -41,8 +41,61 @@ addEventListener('pagehide', () => setRunningFlag(false));
 export const dismiss = (id: string) => set({ dismissed: [...get().dismissed, id] });
 
 // Stale async results: each call takes a ticket; only the newest ticket per slot may write back.
-const tickets: Record<'song' | 'model' | 'index' | 'plan', number> = { song: 0, model: 0, index: 0, plan: 0 };
+const tickets: Record<'song' | 'model' | 'index' | 'plan' | 'lists', number> = { song: 0, model: 0, index: 0, plan: 0, lists: 0 };
 const latest = (slot: keyof typeof tickets) => { const my = ++tickets[slot]; return () => tickets[slot] === my; };
+
+// ---------- UI state ----------
+
+export const updateSettings = (p: Partial<Settings>) => set((s) => ({ settings: { ...s.settings, ...p } }));
+export const openSettings = (tab?: SettingsTab) => { set({ settingsTab: tab }); if (tab) void refreshLists(); };
+export const setOnline = () => set({ online: navigator.onLine });
+export const setResolvedTheme = (resolvedTheme: 'light' | 'dark') => set({ resolvedTheme });
+export const setAB = (ab: 'A' | 'B') => set({ ab });
+export const setMix = (p: Partial<MixParams>) => set((s) => ({ mix: { ...s.mix, ...p } }));
+export const setFormat = (format: AudioFormat) => set({ format });
+export const ackNotice = () => updateSettings({ noticeAck: true });
+export const showNoticeAgain = () => { updateSettings({ noticeAck: false }); openSettings(undefined); };
+export const answerConfirm = (ok: boolean) => { get().confirm?.resolve(ok); set({ confirm: undefined }); };
+
+export function setBackend(backend: BackendPref) {
+  if (backend === get().settings.backend) return;
+  updateSettings({ backend });
+  void initEngine();
+}
+
+/** A3: the deployment default is never stored, so a redeploy with a new default reaches everyone who did not change it. */
+export function setModelBaseUrl(url: string | undefined) {
+  updateSettings({ modelBaseUrl: url === DEFAULT_BASE_URL ? undefined : url });
+  void initEngine();
+}
+
+/** Banners: open the advanced options and limit the range to 30 s. */
+export function shortenToClip() {
+  const d = get().song?.duration;
+  updateSettings({ advancedOpen: true });
+  if (d && d > 30) setOpts({ range: { start: 0, end: 30 } });
+  document.getElementById('advanced')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+export function copyEnvInfo() {
+  const s = get();
+  const info = { app: version, ua: navigator.userAgent, env: s.env, backend: s.settings.backend, modelBase: selModelBaseUrl(s), deviceMemory: (navigator as { deviceMemory?: number }).deviceMemory, cores: navigator.hardwareConcurrency, lang: s.settings.lang };
+  void navigator.clipboard.writeText(JSON.stringify(info, null, 2));
+  toast(t('toast.copied'));
+}
+
+/** Saved models and cache listing (settings, my-models picker); refreshed after every action that changes them. */
+export async function refreshLists() {
+  if (!get().engineReady) return;
+  const current = latest('lists');
+  const [myModels, entries, est, persisted] = await Promise.all([
+    engine.myModels.list().catch(() => []),
+    engine.cache.list().catch(() => []),
+    navigator.storage?.estimate?.().catch(() => undefined),
+    navigator.storage?.persisted?.().catch(() => false),
+  ]);
+  if (current()) set({ myModels, cache: { entries, usage: est?.usage ?? 0, quota: est?.quota ?? 0, persisted: !!persisted } });
+}
 
 // ---------- files ----------
 
@@ -132,7 +185,8 @@ export async function openMyModel(id: string) {
   try {
     const info = await engine.myModels.open(id);
     if (!current()) return;
-    set({ model: { status: 'ready', fileName: info.name, fromMine: true, info, saved: true }, myModelsVersion: get().myModelsVersion + 1 });
+    set({ model: { status: 'ready', fileName: info.name, fromMine: true, info, saved: true } });
+    void refreshLists(); // last used
     applyModelIndex(info, info.name);
     setOpts({ sid: 0 });
     void refreshPlan();
@@ -172,7 +226,9 @@ export async function saveMine(on: boolean) {
   try {
     if (on) await engine.myModels.save(m.info.id, get().index?.id);
     else await engine.myModels.remove(m.info.id);
-    set({ model: { ...get().model!, saved: on }, myModelsVersion: get().myModelsVersion + 1 });
+    const cur = get().model;
+    if (cur) set({ model: { ...cur, saved: on } });
+    void refreshLists();
     if (on) toast.success(t('toast.savedMine', { name: m.info.name }));
   } catch (e) {
     toast.error(t('toast.saveFailed'), { description: toAppError(e).message });
@@ -185,7 +241,7 @@ export async function removeMine(id: string, name: string) {
   try { await engine.myModels.remove(id); } catch (e) { toast.error(t('toast.deleteFailed'), { description: toAppError(e).message }); }
   const m = get().model;
   if (m?.info?.id === id) set({ model: { ...m, saved: false } });
-  set({ myModelsVersion: get().myModelsVersion + 1 });
+  void refreshLists();
 }
 
 // ---------- options / plan ----------
@@ -203,7 +259,7 @@ export function buildJob(profile: 'normal' | 'low' = get().crashed ? 'low' : 'no
     inputId: song.inputId,
     mode: opts.mode,
     range: opts.range,
-    separate: { modelId: 'uvr-hp-vocal', aggressiveness: opts.aggressiveness },
+    separate: { ...DEFAULT_SEPARATE, aggressiveness: opts.aggressiveness },
     modelId: model.info.id,
     indexId: index?.status === 'ready' ? index.id : undefined,
     convert: {
@@ -260,6 +316,7 @@ export async function startDownload(retry = false) {
     });
     set({ dl: undefined });
     void refreshPlan();
+    void refreshLists();
     await run(pending?.rerun ?? false, pending?.profile ?? 'normal');
   } catch (e) {
     const err = toAppError(e);
@@ -270,22 +327,13 @@ export async function startDownload(retry = false) {
 }
 
 export const stopDownload = () => engine.cancel();
+export const showDownload = (open: boolean) => { const dl = get().dl; if (dl) set({ dl: { ...dl, open } }); };
+export const closeDownload = () => set({ dl: undefined });
 
 function emptySteps(mode: Options['mode']): Record<Step, StepInfo> {
   const s = Object.fromEntries(STEPS.map((k) => [k, { state: 'wait', done: 0, total: 0 }])) as Record<Step, StepInfo>;
   if (mode === 'voice') { s.separate.state = 'skipped'; s.mix.state = 'skipped'; }
   return s;
-}
-
-export function rerunChanges(prev: Options, cur: Options): string | undefined {
-  const parts: string[] = [];
-  if (prev.key !== cur.key) parts.push(`${t('opt.keyShort')} ${fmtSigned(prev.key)} → ${fmtSigned(cur.key)}`);
-  if (prev.indexRate !== cur.indexRate) parts.push(`Index ${prev.indexRate} → ${cur.indexRate}`);
-  if (prev.protect !== cur.protect) parts.push(`Protect ${prev.protect} → ${cur.protect}`);
-  if (prev.rmsMixRate !== cur.rmsMixRate) parts.push(`RMS ${prev.rmsMixRate} → ${cur.rmsMixRate}`);
-  if (prev.aggressiveness !== cur.aggressiveness) parts.push(`${t('opt.aggShort')} ${prev.aggressiveness} → ${cur.aggressiveness}`);
-  if (prev.sid !== cur.sid) parts.push(`${t('opt.sidShort')} ${prev.sid} → ${cur.sid}`);
-  return parts.join(' · ') || undefined;
 }
 
 const onUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
@@ -297,7 +345,7 @@ async function run(rerun: boolean, profile: 'normal' | 'low') {
   const seconds = job.range ? job.range.end - job.range.start : s.song.duration ?? 0;
   const snapshot = { ...s.opts };
   const steps = emptySteps(job.mode);
-  const st: Job = { status: 'running', rerun, mode: job.mode, seconds, startedAt: performance.now(), steps, changes: rerun && s.result ? rerunChanges(s.result.opts, snapshot) : undefined };
+  const st: Job = { status: 'running', rerun, mode: job.mode, seconds, startedAt: performance.now(), steps, change: rerun && s.result ? { from: s.result.opts, to: snapshot } : undefined };
   set({ job: st, stems: rerun ? s.stems : undefined });
   setRunningFlag(true);
   addEventListener('beforeunload', onUnload); // EX-5
@@ -385,7 +433,7 @@ export async function recover(action: 'retry' | 'low' | 'wasm' | 'noIndex') {
   if (action === 'noIndex') clearIndex();
   if (action === 'wasm') {
     set({ settings: { ...get().settings, backend: 'wasm' } });
-    toast(t('toast.wasmKept'), { action: { label: t('settings.title'), onClick: () => set({ settingsTab: 'general' }) } });
+    toast(t('toast.wasmKept'), { action: { label: t('settings.title'), onClick: () => openSettings('general') } });
     await initEngine();
   }
   await start({ rerun, profile: action === 'low' ? 'low' : undefined });
@@ -458,6 +506,7 @@ export async function clearCache() {
   const ok = await confirmAsync({ title: t('confirm.clearTitle'), body: t('confirm.clearBody'), action: t('confirm.clearAction'), destructive: true });
   if (!ok) return false;
   try { await engine.cache.clear(); } catch (e) { toast.error(t('toast.deleteFailed'), { description: toAppError(e).message }); }
+  void refreshLists();
   void refreshPlan();
   return true;
 }
@@ -471,7 +520,7 @@ export async function verifyCacheItem(id: string) {
   } catch (e) {
     toast.error(t('toast.verifyFailed'), { description: toAppError(e).message });
   }
-  set({ myModelsVersion: get().myModelsVersion + 1 }); // refreshes cache lists
+  void refreshLists();
   void refreshPlan();
 }
 
@@ -487,7 +536,7 @@ export async function importCache(files: File[]) {
   } catch (e) {
     toast.error(t('toast.importFailed'), { description: toAppError(e).message });
   }
-  set({ myModelsVersion: get().myModelsVersion + 1 });
+  void refreshLists();
   void refreshPlan();
 }
 
@@ -495,11 +544,12 @@ export async function renameMine(id: string, name: string) {
   try { await engine.myModels.rename(id, name); } catch (e) { return void toast.error(t('toast.renameFailed'), { description: toAppError(e).message }); }
   const m = get().model;
   if (m?.info?.id === id) set({ model: { ...m, info: { ...m.info, name } } });
-  set({ myModelsVersion: get().myModelsVersion + 1 });
+  void refreshLists();
 }
 
 export async function removeCacheItem(id: string) {
   try { await engine.cache.remove(id); } catch (e) { toast.error(t('toast.deleteFailed'), { description: toAppError(e).message }); }
+  void refreshLists();
   void refreshPlan();
 }
 

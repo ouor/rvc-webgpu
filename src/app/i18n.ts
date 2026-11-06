@@ -24,7 +24,7 @@ const ko = {
   'index.linkedPacked': 'index 연결됨 (모델과 함께 들어 있음)', 'index.other': '다른 index 고르기', 'index.without': 'index 없이 진행',
 
   'opt.defaultsOk': '기본값 그대로 써도 돼요', 'opt.sid': '화자', 'opt.sidItem': '{n}번 화자', 'opt.sidShort': '화자', 'opt.sidNote': '대부분의 모델은 화자가 하나예요. 잘 모르면 0번 그대로 두세요.',
-  'opt.key': '키 (Pitch)', 'opt.keyShort': '키', 'opt.keyHelp': '반음 단위로 목소리 높이를 바꿔요. 남자 노래를 여자 모델로 바꾸면 +12, 반대면 −12가 보통이에요.',
+  'opt.key': '키 (Pitch)', 'opt.keyShort': '키', 'opt.indexShort': 'Index', 'opt.protectShort': '자음 보호', 'opt.rmsShort': '음량 혼합', 'opt.keyHelp': '반음 단위로 목소리 높이를 바꿔요. 남자 노래를 여자 모델로 바꾸면 +12, 반대면 −12가 보통이에요.',
   'opt.semitone': '반음', 'opt.keyText': '키 {n} 반음', 'opt.chipDown': '여→남 −12', 'opt.chipUp': '남→여 +12',
   'opt.keyWarn': '반주 키는 바뀌지 않아요. ±12 외의 값은 원곡 조와 어긋날 수 있어요.', 'opt.nof0': '피치 없는 모델이라 쓸 수 없어요',
   'opt.indexRate': 'Index 비율', 'opt.indexHelp': '높을수록 모델이 학습한 음색을 더 강하게 따라요. 발음이 뭉개지면 낮춰 보세요.', 'opt.indexOff': '‘.index’를 넣으면 쓸 수 있어요',
@@ -173,7 +173,7 @@ const en: Record<Key, string> = {
   'index.none': 'No index (optional)', 'index.add': 'Add .index', 'index.parsing': 'Reading index…', 'index.linked': 'Index linked · {n} vectors',
   'index.linkedPacked': 'Index linked (bundled with the model)', 'index.other': 'Choose another index', 'index.without': 'Continue without index',
   'opt.defaultsOk': 'Defaults work fine', 'opt.sid': 'Speaker', 'opt.sidItem': 'Speaker {n}', 'opt.sidShort': 'Speaker', 'opt.sidNote': 'Most models have one speaker. If unsure, keep speaker 0.',
-  'opt.key': 'Key (Pitch)', 'opt.keyShort': 'Key', 'opt.keyHelp': 'Shifts the voice in semitones. Male song to female model is usually +12, the reverse −12.',
+  'opt.key': 'Key (Pitch)', 'opt.keyShort': 'Key', 'opt.indexShort': 'Index', 'opt.protectShort': 'Protect', 'opt.rmsShort': 'RMS mix', 'opt.keyHelp': 'Shifts the voice in semitones. Male song to female model is usually +12, the reverse −12.',
   'opt.semitone': 'st', 'opt.keyText': 'Key {n} semitones', 'opt.chipDown': 'F→M −12', 'opt.chipUp': 'M→F +12',
   'opt.keyWarn': 'The backing track keeps its key. Values other than ±12 may clash with it.', 'opt.nof0': 'Not available for a model without pitch',
   'opt.indexRate': 'Index rate', 'opt.indexHelp': 'Higher follows the trained timbre more strongly. Lower it if pronunciation gets mushy.', 'opt.indexOff': 'Add an ‘.index’ to use this',

@@ -2,31 +2,26 @@
 import { useMemo, type ReactNode } from 'react';
 import { useNow } from '../lib/hooks';
 import { Activity, Boxes, Brain, Circle, CircleCheck, CircleDashed, CircleMinus, CircleX, Download as DownloadIcon, Info, Loader2, Lock, Recycle, Split, TriangleAlert } from 'lucide-react';
-import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import { InlineError } from './Notice';
 import { PlayButton, usePlayer } from './Player';
 import type { DownloadItem } from '@/shared/types';
-import { estimateRun, estimateStage, fmtBytes, fmtTime, type RunStage } from '../lib/format';
+import { estimateRun, estimateStage, fmtBytes, fmtEta, fmtLeft, fmtTime, formatChanges, changedKeys, hostOf, type RunStage } from '../lib/format';
+import { roleOf, type Role } from '../lib/catalog';
+import { useShallow } from 'zustand/react/shallow';
 import { cn } from '../lib/utils';
-import { cancelJob, exportSeparated, recover, start, startDownload, stopDownload } from '../controller';
-import { set, useApp, type Step, type StepInfo } from '../store';
-import { useT, type T } from '../i18n';
-import { envInfo } from './Settings';
-
-export function fmtEta(t: T, s: number) {
-  if (s < 60) return t('eta.underMin');
-  return t('eta.min', { n: Math.round(s / 60) });
-}
-const fmtLeft = (t: T, s: number) => (s < 60 ? t('eta.sec', { n: Math.max(1, Math.round(s / 5) * 5) }) : t('eta.minSec', { m: Math.floor(s / 60), s: Math.round(s % 60) }));
+import { cancelJob, closeDownload, copyEnvInfo, exportSeparated, openSettings, recover, showDownload, start, startDownload, stopDownload } from '../controller';
+import { STEPS, selMissingBytes, selModelBaseUrl, selSeconds, useApp, type Step, type StepInfo } from '../store';
+import { useT } from '../i18n';
 
 // ---------------- ActionBar ----------------
 
 export function ActionBar() {
   const t = useT();
-  const s = useApp();
-  const { song, model, index, opts, plan, env, dl, engineReady, envError } = s;
+  const { song, model, index, opts, env, dl, engineReady, envError } = useApp(useShallow((s) => ({ song: s.song, model: s.model, index: s.index, opts: s.opts, env: s.env, dl: s.dl, engineReady: s.engineReady, envError: s.envError })));
+  const seconds = useApp(selSeconds);
+  const need = useApp(selMissingBytes);
   const voice = opts.mode === 'voice';
   const cta = voice ? t('cta.voice') : t('cta.song');
   let reason: ReactNode | undefined, sub: ReactNode | undefined, title: ReactNode;
@@ -48,11 +43,9 @@ export function ActionBar() {
   else if (envError) { title = t('banner.initTitle'); reason = title; }
   else if (!engineReady) { title = t('bar.preparing'); reason = title; }
   else {
-    const seconds = opts.range ? opts.range.end - opts.range.start : song.duration ?? 0;
     const stages: RunStage[] = voice ? ['f0', 'features', 'convert'] : ['separate', 'f0', 'features', 'convert'];
     const eta = fmtEta(t, estimateRun(seconds, env?.backend ?? 'webgpu', stages));
     title = <>{voice ? t('bar.voiceFlow') : t('bar.songFlow')} <span className="text-small font-normal text-muted-foreground tnum">· {t('bar.eta', { eta })}{opts.range ? ` · ${t('bar.rangeBased')}` : ''}</span></>;
-    const need = plan?.filter((d) => !d.cached).reduce((a, d) => a + d.bytes, 0) ?? 0;
     sub = need > 0
       ? <span className="inline-flex items-center gap-1.5"><DownloadIcon className="size-3.5" />{voice ? t('bar.skipSep') + ' ' : ''}{t('bar.firstDl', { size: fmtBytes(need) })}</span>
       : voice ? t('bar.skipSep') : t('bar.cached');
@@ -71,7 +64,7 @@ export function ActionBar() {
           </>}
         </div>
         {loadingDl
-          ? <Button variant="secondary" className="h-10 rounded-lg" onClick={() => set({ dl: { ...dl, open: true } })}>{t('dl.show')}</Button>
+          ? <Button variant="secondary" className="h-10 rounded-lg" onClick={() => showDownload(true)}>{t('dl.show')}</Button>
           : <Button className="h-12 px-7 rounded-xl text-lead font-semibold disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled={!!reason || !!dl}
             aria-describedby={reason ? 'bar-why' : undefined} onClick={() => void start()}>{cta}</Button>}
       </div>
@@ -81,20 +74,13 @@ export function ActionBar() {
 
 // ---------------- S2 download dialog ----------------
 
-const ITEM_ICON: Record<string, typeof Split> = { 'uvr-hp-vocal': Split, rmvpe: Activity, contentvec: Brain };
-
-export function itemLabel(t: T, id: string): [string, string] {
-  if (id === 'uvr-hp-vocal') return [t('pm.separate'), 'UVR VR'];
-  if (id === 'rmvpe') return [t('pm.f0'), 'RMVPE'];
-  if (id === 'contentvec') return [t('pm.features'), 'ContentVec'];
-  const m = /^(v\d)-(f0|nof0)-(\d+)k$/.exec(id);
-  return [t('pm.template'), m ? `${m[1]} · ${m[3]}k${m[2] === 'nof0' ? ` · ${t('model.nof0')}` : ''}` : id];
-}
+const ROLE_ICON: Record<Role, typeof Split> = { 'pm.separate': Split, 'pm.f0': Activity, 'pm.features': Brain, 'pm.template': Boxes };
 
 function DlItem({ item, got, state, failed }: { item: DownloadItem; got: number; state: 'wait' | 'run' | 'done' | 'confirm'; failed?: boolean }) {
   const t = useT();
-  const Icon = ITEM_ICON[item.id] ?? Boxes;
-  const [name, sub] = itemLabel(t, item.id);
+  const role = roleOf(item.id);
+  const Icon = ROLE_ICON[role];
+  const [name, sub] = [t(role), item.label];
   const pct = Math.min(100, (got / item.bytes) * 100);
   return (
     <li className="flex items-center gap-3 py-3">
@@ -122,8 +108,9 @@ export function DownloadDialog() {
   const dl = useApp((s) => s.dl);
   const env = useApp((s) => s.env);
   const now = useNow(dl?.status === 'loading');
+  const baseUrl = useApp(selModelBaseUrl);
   if (!dl) return null;
-  const close = (o: boolean) => { if (o) return; if (dl.status === 'loading') set({ dl: { ...dl, open: false } }); else set({ dl: undefined }); };
+  const close = (o: boolean) => { if (o) return; if (dl.status === 'loading') showDownload(false); else closeDownload(); };
   const rows = dl.items.map((item) => {
     const got = dl.got?.[item.id] ?? 0;
     const state: 'wait' | 'run' | 'done' | 'confirm' = ['confirm', 'storage', 'offline'].includes(dl.status) ? 'confirm'
@@ -162,24 +149,24 @@ export function DownloadDialog() {
         ) : (
           <div className="mt-4 flex justify-between text-body"><span className="text-muted-foreground">{t('dl.total')}</span><span className="font-bold tnum">{t('dl.about', { size: fmtBytes(dl.total) })}</span></div>
         )}
-        {dl.status === 'confirm' && <p className="mt-4 flex items-center gap-1.5 text-caption text-muted-foreground"><Lock className="size-3.5" />{t('dl.source', { host: modelHost() })}</p>}
+        {dl.status === 'confirm' && <p className="mt-4 flex items-center gap-1.5 text-caption text-muted-foreground"><Lock className="size-3.5" />{t('dl.source', { host: hostOf(baseUrl) })}</p>}
         {dl.error && dl.status === 'failed' && <InlineError className="mt-4" error={dl.error} />}
         <div className="mt-6 flex justify-end gap-2">
           {dl.status === 'confirm' && <>
-            <Button variant="ghost" className="h-10 rounded-lg" onClick={() => set({ dl: undefined })}>{t('dl.later')}</Button>
+            <Button variant="ghost" className="h-10 rounded-lg" onClick={closeDownload}>{t('dl.later')}</Button>
             <Button className="h-10 rounded-lg px-5" onClick={() => void startDownload()}>{t('dl.start')}</Button>
           </>}
           {dl.status === 'loading' && <Button variant="secondary" className="h-10 rounded-lg" onClick={() => void stopDownload()}>{t('dl.stop')}</Button>}
           {dl.status === 'failed' && <>
-            <Button variant="ghost" className="h-10 rounded-lg" onClick={() => set({ dl: undefined })}>{t('common.close')}</Button>
+            <Button variant="ghost" className="h-10 rounded-lg" onClick={closeDownload}>{t('common.close')}</Button>
             <Button className="h-10 rounded-lg" onClick={() => void startDownload(true)}>{t('dl.retry')}</Button>
           </>}
           {dl.status === 'storage' && <>
-            <Button variant="ghost" className="h-10 rounded-lg" onClick={() => set({ dl: undefined })}>{t('common.close')}</Button>
-            <Button className="h-10 rounded-lg" onClick={() => set({ dl: undefined, settingsTab: 'storage' })}>{t('dl.manage')}</Button>
+            <Button variant="ghost" className="h-10 rounded-lg" onClick={closeDownload}>{t('common.close')}</Button>
+            <Button className="h-10 rounded-lg" onClick={() => { closeDownload(); openSettings('storage'); }}>{t('dl.manage')}</Button>
           </>}
           {dl.status === 'offline' && <>
-            <Button variant="ghost" className="h-10 rounded-lg" onClick={() => set({ dl: undefined })}>{t('common.close')}</Button>
+            <Button variant="ghost" className="h-10 rounded-lg" onClick={closeDownload}>{t('common.close')}</Button>
             <Button className="h-10 rounded-lg" onClick={() => void startDownload(true)}>{t('common.retry')}</Button>
           </>}
         </div>
@@ -188,13 +175,7 @@ export function DownloadDialog() {
   );
 }
 
-export function modelHost() {
-  try { return new URL(useApp.getState().settings.modelBaseUrl, location.href).host; } catch { return '?'; }
-}
-
 // ---------------- S3 progress panel ----------------
-
-const STEP_ORDER: Step[] = ['separate', 'f0', 'features', 'convert', 'mix'];
 
 function StemButtons() {
   const t = useT();
@@ -254,20 +235,22 @@ export function ProgressPanel() {
   const result = useApp((s) => s.result);
   const now = useNow(!!job && job.status !== 'error');
   if (!job) return null;
-  const steps = STEP_ORDER.filter((k) => job.steps[k].state !== 'skipped');
+  const steps = STEPS.filter((k) => job.steps[k].state !== 'skipped');
   const curIdx = job.current ? steps.indexOf(job.current) : 0;
   const cur = job.current ? job.steps[job.current] : undefined;
   const backend = job.fallback ? 'wasm' : env?.backend ?? 'webgpu';
   let left: number | undefined;
   if (cur && job.current !== 'mix') {
     const curLeft = cur.state === 'run' && cur.done > 0 && cur.startedAt ? ((now - cur.startedAt) / 1000 / cur.done) * (cur.total - cur.done) : undefined;
-    const pending = STEP_ORDER.filter((k) => k !== 'mix' && job.steps[k].state === 'wait').reduce((a, k) => a + estimateStage(k as RunStage, job.seconds, backend), 0);
+    const pending = STEPS.filter((k) => k !== 'mix' && job.steps[k].state === 'wait').reduce((a, k) => a + estimateStage(k as RunStage, job.seconds, backend), 0);
     left = curLeft === undefined ? undefined : curLeft + pending;
   }
   const elapsed = (now - job.startedAt) / 1000;
   const err = job.status === 'error' ? job.error : undefined;
   const sepOk = job.steps.separate.state === 'done' || job.steps.separate.state === 'reused';
-  const keyOnly = !!result && job.rerun && !!job.changes && /→/.test(job.changes) && job.changes.split(' · ').every((c) => c.startsWith(t('opt.keyShort')));
+  const changed = job.change ? changedKeys(job.change.from, job.change.to) : [];
+  const keyOnly = !!result && changed.length === 1 && changed[0] === 'key';
+  const changes = job.change && formatChanges(t, job.change.from, job.change.to);
   const title = err ? (err.code === 'OOM' ? t('err.OOM.title') : t('prog.failed'))
     : job.status === 'cancelling' ? t('prog.cancelling')
     : job.rerun ? t('prog.rerun') : job.mode === 'voice' ? t('prog.voice') : t('prog.song');
@@ -278,7 +261,7 @@ export function ProgressPanel() {
       {err.code === 'INDEX_DIM_MISMATCH' && <Button className="h-9 rounded-lg" onClick={() => void recover('noIndex')}>{t('index.without')}</Button>}
       {err.code !== 'OOM' && <Button variant={err.code === 'GPU_LOST' || err.code === 'INDEX_DIM_MISMATCH' ? 'secondary' : 'default'} className="h-9 rounded-lg" onClick={() => void recover('retry')}>{t('common.retry')}</Button>}
       {sepOk && <Button variant="secondary" className="h-9 rounded-lg" onClick={() => void exportSeparated()}><DownloadIcon className="size-4" />{t('prog.saveSeparated')}</Button>}
-      {err.code === 'INTERNAL' && <Button variant="secondary" className="h-9 rounded-lg" onClick={() => { void navigator.clipboard.writeText(envInfo()); toast(t('toast.copied')); }}>{t('about.copyEnv')}</Button>}
+      {err.code === 'INTERNAL' && <Button variant="secondary" className="h-9 rounded-lg" onClick={copyEnvInfo}>{t('about.copyEnv')}</Button>}
       <Button variant="ghost" className="h-9 rounded-lg" onClick={() => void cancelJob()}>{t('common.close')}</Button>
     </>
   );
@@ -287,7 +270,7 @@ export function ProgressPanel() {
       <div className="mx-auto max-w-[1232px] rounded-2xl bg-card shadow-float border p-5 animate-in slide-in-from-bottom-4 fade-in duration-200">
         <div className="flex items-start gap-4">
           <div className="flex-1 min-w-0">
-            <h2 id="pp-t" className="text-h2">{title}{job.rerun && job.changes && !err && <span className="font-normal text-muted-foreground"> · {job.changes}</span>}</h2>
+            <h2 id="pp-t" className="text-h2">{title}{changes && !err && <span className="font-normal text-muted-foreground"> · {changes}</span>}</h2>
             {!err && (
               <p className="text-small text-muted-foreground mt-0.5 tnum">
                 {job.status === 'cancelling' ? t('prog.cancellingSub') : <>
@@ -308,7 +291,7 @@ export function ProgressPanel() {
           </div>
         )}
         <ol className="mt-4 grid gap-2" style={{ gridTemplateColumns: 'repeat(5, minmax(0, 1fr))' }}>
-          {STEP_ORDER.map((k) => <StepItem key={k} k={k} info={job.steps[k]} cancelling={job.status === 'cancelling'} rerunKeyOnly={keyOnly} />)}
+          {STEPS.map((k) => <StepItem key={k} k={k} info={job.steps[k]} cancelling={job.status === 'cancelling'} rerunKeyOnly={keyOnly} />)}
         </ol>
         {err && <InlineError className="mt-4" error={err} actions={actions} />}
         {!err && <p className="mt-3 flex items-center gap-1.5 text-caption text-muted-foreground"><Info className="size-3.5" />{t('prog.note')}</p>}

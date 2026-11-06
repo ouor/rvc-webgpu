@@ -1,5 +1,5 @@
 // (1) Song card and (2) voice model card.
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { CircleCheck, FolderHeart, Loader2, MicVocal, Music, X } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
@@ -8,11 +8,10 @@ import { Dropzone, pickFiles } from './Dropzone';
 import { HelpTip, Segmented, StepCard } from './Field';
 import { InlineError, NoticeButton } from './Notice';
 import { AudioPlayer, usePlayer } from './Player';
-import type { SavedModel } from '@/shared/types';
 import { AUDIO_ACCEPT, INDEX_ACCEPT, MODEL_ACCEPT, fmtBytes, fmtHz, fmtTime } from '../lib/format';
 import { cn } from '../lib/utils';
-import { clearIndex, clearModel, clearSong, engine, openMyModel, saveMine, setOnnxSr, setOpts } from '../controller';
-import { selBusy, set, useApp } from '../store';
+import { clearIndex, clearModel, clearSong, openMyModel, openSettings, saveMine, setOnnxSr, setOpts } from '../controller';
+import { selBusy, useApp } from '../store';
 import { useT } from '../i18n';
 
 
@@ -87,11 +86,8 @@ export function SongCard() {
 
 function MyModelPicker() {
   const t = useT();
-  const version = useApp((s) => s.myModelsVersion);
-  const [list, setList] = useState<SavedModel[]>([]);
+  const list = useApp((s) => s.myModels) ?? [];
   const [open, setOpen] = useState(false);
-  const ready = useApp((s) => s.engineReady);
-  useEffect(() => { if (ready) void engine.myModels.list().then(setList).catch(() => setList([])); }, [version, open, ready]);
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -114,7 +110,7 @@ function MyModelPicker() {
               ))}
             </CommandGroup>
           </CommandList>
-          <button type="button" className="w-full border-t px-3 h-10 text-left text-small font-semibold text-primary hover:bg-muted" onClick={() => { setOpen(false); set({ settingsTab: 'models' }); }}>{t('mine.manage')}</button>
+          <button type="button" className="w-full border-t px-3 h-10 text-left text-small font-semibold text-primary hover:bg-muted" onClick={() => { setOpen(false); openSettings('models'); }}>{t('mine.manage')}</button>
         </Command>
       </PopoverContent>
     </Popover>

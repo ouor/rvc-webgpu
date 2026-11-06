@@ -1,8 +1,9 @@
-// UI state (zustand). Engine calls live in controller.ts; this file only holds data.
+// UI state (zustand). This file only holds data and selectors; every write goes through a named action in controller.ts
+// (eslint forbids set/get in components). Non-serialisable fields (AudioBuffer, Confirm.resolve) are kept out of persist by partialize.
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AppError } from '@/shared/errors';
-import type { BackendPref, DownloadItem, EnvReport, IndexInfo, RvcModelInfo } from '@/shared/types';
+import { DEFAULT_CONVERT, DEFAULT_SEPARATE, type BackendPref, type CacheEntry, type DownloadItem, type EnvReport, type IndexInfo, type RvcModelInfo, type SavedModel } from '@/shared/types';
 import type { AudioFormat } from '@/audio/wav';
 import type { MixParams } from '@/audio/mixer';
 import { DEFAULT_MIX } from '@/audio/mixer';
@@ -18,7 +19,7 @@ export interface Settings {
   lang: Lang;
   theme: Theme;
   backend: BackendPref;
-  modelBaseUrl: string;
+  modelBaseUrl?: string; // undefined = the deployment default (A3: a redeploy can move it)
   remember: boolean;
   noticeAck: boolean;
   advancedOpen: boolean;
@@ -34,7 +35,8 @@ export interface Options {
   aggressiveness: number;
   range?: { start: number; end: number };
 }
-export const DEFAULT_OPTIONS: Options = { mode: 'song', key: 0, indexRate: 0.75, protect: 0.33, rmsMixRate: 0.25, sid: 0, aggressiveness: 10 };
+const { f0UpKey, indexRate, protect, rmsMixRate, sid } = DEFAULT_CONVERT;
+export const DEFAULT_OPTIONS: Options = { mode: 'song', key: f0UpKey, indexRate, protect, rmsMixRate, sid, aggressiveness: DEFAULT_SEPARATE.aggressiveness };
 
 export interface Song {
   status: 'parsing' | 'ready' | 'error';
@@ -70,6 +72,7 @@ export interface IndexState {
 
 export type StepState = 'wait' | 'load' | 'run' | 'done' | 'reused' | 'skipped' | 'error' | 'cancelled';
 export type Step = RunStage | 'mix';
+export const STEPS: Step[] = ['separate', 'f0', 'features', 'convert', 'mix'];
 export interface StepInfo { state: StepState; done: number; total: number; startedAt?: number; ms?: number }
 
 export interface Job {
@@ -82,7 +85,7 @@ export interface Job {
   current?: Step;
   fallback?: boolean; // a stage fell back from WebGPU to WASM
   error?: AppError;
-  changes?: string; // rerun title suffix, e.g. "키 0 → +12"
+  change?: { from: Options; to: Options }; // rerun: options before and after (title suffix, "key only" check)
 }
 
 export interface Download {
@@ -136,14 +139,15 @@ export interface State {
   view: 'work' | 'result';
   settingsTab?: SettingsTab;
   confirm?: Confirm;
-  myModelsVersion: number;
+  myModels?: SavedModel[]; // most recently used first
+  cache?: { entries: CacheEntry[]; usage: number; quota: number; persisted: boolean };
   resolvedTheme: 'light' | 'dark'; // what the .dark class currently says (theme may be 'system')
 }
 
 export const useApp = create<State>()(
-  persist(
+  persist<State, [], [], Partial<State>>(
     (): State => ({
-      settings: { lang: 'ko', theme: 'system', backend: 'auto', modelBaseUrl: DEFAULT_BASE_URL, remember: true, noticeAck: false, advancedOpen: false },
+      settings: { lang: 'ko', theme: 'system', backend: 'auto', remember: true, noticeAck: false, advancedOpen: false },
       opts: DEFAULT_OPTIONS,
       engineReady: false,
       online: navigator.onLine,
@@ -153,12 +157,18 @@ export const useApp = create<State>()(
       mix: DEFAULT_MIX,
       format: 'pcm16',
       view: 'work',
-      myModelsVersion: 0,
       resolvedTheme: 'light',
     }),
     {
       name: 'web-rvc:ui',
-      version: 1,
+      // Bump on any change to the persisted shape and handle the old shape in migrate (A5).
+      version: 2,
+      migrate: (p, v) => {
+        const s = (p ?? {}) as Partial<State>;
+        // v1 stored the deployment default URL; drop it so the current default applies (A3).
+        if (v < 2 && s.settings?.modelBaseUrl === DEFAULT_BASE_URL) s.settings = { ...s.settings, modelBaseUrl: undefined };
+        return s;
+      },
       // ET-3: options are remembered only when the user keeps "remember" on; the range belongs to one song, never kept.
       partialize: (s) => ({ settings: s.settings, format: s.format, ...(s.settings.remember ? { opts: { ...s.opts, range: undefined } } : {}) }),
       merge: (p, cur) => {
@@ -178,4 +188,11 @@ export function confirmAsync(c: Omit<Confirm, 'resolve'>): Promise<boolean> {
 }
 
 export const selBusy = (s: State) => !!s.job && s.job.status !== 'error';
+export const selModelBaseUrl = (s: State) => s.settings.modelBaseUrl ?? DEFAULT_BASE_URL;
+/** Result shown/exported now: A = previous run while comparing. */
+export const selCurrentResult = (s: State) => (s.ab === 'A' && s.prev) || s.result;
+/** Bytes still to download for the current job plan. */
+export const selMissingBytes = (s: State) => s.plan?.filter((d) => !d.cached).reduce((a, d) => a + d.bytes, 0) ?? 0;
+/** Seconds of audio the next run processes. */
+export const selSeconds = (s: State) => (s.opts.range ? s.opts.range.end - s.opts.range.start : s.song?.duration ?? 0);
 export const isBusy = () => selBusy(get());

@@ -5,8 +5,8 @@ import { Accordion as A } from 'radix-ui';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { SectionLabel, SliderField, StepCard } from './Field';
 import { fmtTime, parseTime } from '../lib/format';
-import { setOpts } from '../controller';
-import { DEFAULT_OPTIONS, set, useApp } from '../store';
+import { setOpts, updateSettings } from '../controller';
+import { DEFAULT_OPTIONS, useApp } from '../store';
 import { useT } from '../i18n';
 
 function RangeInputs() {
@@ -65,7 +65,7 @@ export function OptionsFields({ rerun }: { rerun?: boolean }) {
         label={t('opt.indexRate')} help={t('opt.indexHelp')} value={hasIndex ? opts.indexRate : 0} onChange={(indexRate) => setOpts({ indexRate })}
         min={0} max={1} step={0.05} defaultValue={DEFAULT_OPTIONS.indexRate} disabled={!hasIndex} note={!hasIndex ? t('opt.indexOff') : undefined}
       />
-      <A.Root type="single" collapsible value={advancedOpen ? 'adv' : ''} onValueChange={(v) => set((s) => ({ settings: { ...s.settings, advancedOpen: v === 'adv' } }))}>
+      <A.Root type="single" collapsible value={advancedOpen ? 'adv' : ''} onValueChange={(v) => updateSettings({ advancedOpen: v === 'adv' })}>
         <A.Item value="adv" id="advanced" className="rounded-xl bg-muted/60 data-[state=open]:bg-transparent data-[state=open]:ring-1 data-[state=open]:ring-border">
           <A.Header>
             <A.Trigger className="group w-full h-11 px-4 flex items-center justify-between text-small font-semibold rounded-xl focus-visible:outline-2 focus-visible:outline-ring">

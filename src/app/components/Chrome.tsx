@@ -6,15 +6,14 @@ import { Button } from './ui/button';
 import { Banner, NoticeButton } from './Notice';
 import { cn } from '../lib/utils';
 import { fmtBytes } from '../lib/format';
-import { dismiss, initEngine, setOpts } from '../controller';
-import { set, useApp } from '../store';
+import { ackNotice, dismiss, initEngine, openSettings, shortenToClip } from '../controller';
+import { selMissingBytes, useApp } from '../store';
+import { useShallow } from 'zustand/react/shallow';
 import { useT } from '../i18n';
-
-const openSettings = (tab: 'general' | 'storage' | 'privacy') => set({ settingsTab: tab });
 
 export function EnvBadge() {
   const t = useT();
-  const { env, envError, online, engineReady } = useApp();
+  const { env, envError, online, engineReady } = useApp(useShallow((s) => ({ env: s.env, envError: s.envError, online: s.online, engineReady: s.engineReady })));
   const fallback = useApp((s) => s.job?.fallback);
   let tone = 'muted', text = t('env.checking'), spin = false;
   if (!online && engineReady) text = t('env.offline');
@@ -48,7 +47,7 @@ export function AppHeader() {
           <ShieldCheck className="size-4 text-success" />{t('privacy.chip')}
         </button>
         <EnvBadge />
-        <button type="button" onClick={() => set({ settingsTab: 'general' })} className="grid place-items-center size-9 rounded-lg hover:bg-muted" aria-label={t('settings.title')}>
+        <button type="button" onClick={() => openSettings('general')} className="grid place-items-center size-9 rounded-lg hover:bg-muted" aria-label={t('settings.title')}>
           <Settings className="size-5" strokeWidth={1.75} />
         </button>
       </div>
@@ -59,14 +58,9 @@ export function AppHeader() {
 /** S6 banners: never block, closable for the session. */
 export function Banners() {
   const t = useT();
-  const s = useApp();
-  const { env, envError, dismissed, crashed, plan } = s;
-  const shorten = () => {
-    const d = s.song?.duration;
-    set({ settings: { ...s.settings, advancedOpen: true } });
-    if (d && d > 30) setOpts({ range: { start: 0, end: 30 } });
-    document.getElementById('advanced')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  };
+  const { env, envError, dismissed, crashed } = useApp(useShallow((s) => ({ env: s.env, envError: s.envError, dismissed: s.dismissed, crashed: s.crashed })));
+  const need = useApp(selMissingBytes);
+  const shorten = shortenToClip;
   const items = [];
   if (envError) items.push(
     <Banner key="init" tone="error" title={t('banner.initTitle')} body={t('banner.initBody')}
@@ -80,7 +74,6 @@ export function Banners() {
     <Banner key="wasm" tone="warning" title={env.crossOriginIsolated ? t('banner.wasmTitle') : t('banner.singleTitle')} body={env.crossOriginIsolated ? t('banner.wasmBody') : t('banner.singleBody')}
       actions={<><NoticeButton onClick={shorten}>{t('banner.shorten')}</NoticeButton><NoticeButton onClick={() => openSettings('general')}>{t('common.more')}</NoticeButton></>} onClose={() => dismiss('wasm')} />,
   );
-  const need = plan ? plan.filter((d) => !d.cached).reduce((a, d) => a + d.bytes, 0) : 0;
   const free = env ? env.storage.quota - env.storage.usage : Infinity;
   if (env && env.storage.quota > 0 && need > free && !dismissed.includes('quota')) items.push(
     <Banner key="quota" tone="warning" title={t('banner.quotaTitle')} body={t('banner.quotaBody', { need: fmtBytes(need), free: fmtBytes(Math.max(0, free)) })}
@@ -97,8 +90,8 @@ export function Banners() {
 
 export function FirstRunNotice() {
   const t = useT();
-  const s = useApp((x) => x.settings);
-  if (s.noticeAck) return null;
+  const ack = useApp((s) => s.settings.noticeAck);
+  if (ack) return null;
   return (
     <div className="mb-5 flex items-start gap-3 rounded-xl bg-card shadow-card px-5 py-4">
       <Info className="size-5 text-primary mt-0.5 shrink-0" />
@@ -106,7 +99,7 @@ export function FirstRunNotice() {
         <p className="font-semibold">{t('notice.title')}</p>
         <p className="text-small text-muted-foreground mt-0.5">{t('notice.body')}</p>
       </div>
-      <Button variant="secondary" className="h-9 rounded-lg" onClick={() => set({ settings: { ...s, noticeAck: true } })}>{t('notice.ack')}</Button>
+      <Button variant="secondary" className="h-9 rounded-lg" onClick={ackNotice}>{t('notice.ack')}</Button>
     </div>
   );
 }

@@ -6,10 +6,11 @@ import { ModelSection, SongCard } from './components/Inputs';
 import { OptionsCard } from './components/Options';
 import { ActionBar, DownloadDialog, ProgressPanel } from './components/Run';
 import { ResultView } from './components/Result';
-import { ConfirmDialog, SettingsDialog } from './components/Settings';
-import { addFiles, detectCrash, initEngine } from './controller';
+import { SettingsDialog } from './components/Settings';
+import { ConfirmDialog } from './components/ConfirmDialog';
+import { addFiles, detectCrash, initEngine, setOnline, setResolvedTheme } from './controller';
 import { cn } from './lib/utils';
-import { selBusy, set, useApp } from './store';
+import { selBusy, useApp } from './store';
 
 function useTheme() {
   const theme = useApp((s) => s.settings.theme);
@@ -19,7 +20,7 @@ function useTheme() {
     const apply = () => {
       const dark = theme === 'dark' || (theme === 'system' && mq.matches);
       document.documentElement.classList.toggle('dark', dark);
-      set({ resolvedTheme: dark ? 'dark' : 'light' }); // after the class flips, so waveforms read the new colours
+      setResolvedTheme(dark ? 'dark' : 'light'); // after the class flips, so waveforms read the new colours
     };
     apply();
     mq.addEventListener('change', apply);
@@ -53,15 +54,14 @@ export function App() {
 
   useEffect(() => {
     if (!started) { started = true; detectCrash(); void initEngine(); } // StrictMode runs effects twice
-    const online = () => set({ online: navigator.onLine });
-    addEventListener('online', online);
-    addEventListener('offline', online);
+    addEventListener('online', setOnline);
+    addEventListener('offline', setOnline);
     // Whole-page drop: files are routed to the right card by extension.
     const over = (e: DragEvent) => e.preventDefault();
     const drop = (e: DragEvent) => { e.preventDefault(); if (e.dataTransfer?.files.length) void addFiles([...e.dataTransfer.files]); };
     addEventListener('dragover', over);
     addEventListener('drop', drop);
-    return () => { removeEventListener('online', online); removeEventListener('offline', online); removeEventListener('dragover', over); removeEventListener('drop', drop); };
+    return () => { removeEventListener('online', setOnline); removeEventListener('offline', setOnline); removeEventListener('dragover', over); removeEventListener('drop', drop); };
   }, []);
 
   return (
