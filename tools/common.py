@@ -131,6 +131,46 @@ def snr_db(ref, got):
     return float(10 * np.log10((ref ** 2).sum() / max(((ref - got) ** 2).sum(), 1e-300)))
 
 
+# ARCHITECTURE 7.1: what the browser's .pth reader (src/formats/pth.ts) accepts.
+PTH_OPCODES = {"PROTO", "FRAME", "EMPTY_DICT", "EMPTY_LIST", "EMPTY_TUPLE", "MARK", "BINPUT", "LONG_BINPUT", "MEMOIZE",
+               "BINGET", "LONG_BINGET", "BINUNICODE", "SHORT_BINUNICODE", "BININT", "BININT1", "BININT2", "LONG1",
+               "BINFLOAT", "NEWTRUE", "NEWFALSE", "NONE", "TUPLE", "TUPLE1", "TUPLE2", "TUPLE3", "GLOBAL",
+               "STACK_GLOBAL", "REDUCE", "BINPERSID", "SETITEM", "SETITEMS", "APPEND", "APPENDS", "STOP"}
+PTH_GLOBALS = {"collections OrderedDict", "torch._utils _rebuild_tensor_v2", "torch._utils _rebuild_parameter",
+               *(f"torch {s}Storage" for s in ("Half", "Float", "BFloat16", "Long", "Int", "Bool", "Byte"))}
+
+
+def check_pth(path, manifest_path):
+    """Public .pth contract (17.2-17.3): zip with STORED entries, allowlisted pickle, flat state_dict of
+    contiguous fp16/fp32 tensors holding every manifest key with the manifest shape. Returns a list of errors."""
+    import pickletools
+    import zipfile
+
+    errors = []
+    with zipfile.ZipFile(path) as z:
+        errors += [f"compressed entry {i.filename}" for i in z.infolist() if i.compress_type != zipfile.ZIP_STORED]
+        pkl = z.read(next(n for n in z.namelist() if n.endswith("/data.pkl")))
+    strings = []
+    for op, arg, _ in pickletools.genops(pkl):
+        if op.name not in PTH_OPCODES:
+            errors.append(f"opcode {op.name}")
+        if op.name in ("SHORT_BINUNICODE", "BINUNICODE"):
+            strings.append(arg)
+        g = arg if op.name == "GLOBAL" else " ".join(strings[-2:]) if op.name == "STACK_GLOBAL" else None
+        if g is not None and g not in PTH_GLOBALS:
+            errors.append(f"global {g}")
+    if errors:
+        return errors  # never unpickle a file that breaks the allowlist
+    sd = torch.load(path, map_location="cpu", weights_only=True)
+    if not isinstance(sd, OrderedDict):
+        errors.append("top level is not a flat OrderedDict")
+    for t in json.load(open(manifest_path, encoding="utf-8"))["tensors"]:
+        v = sd.get(t["key"])
+        if v is None or list(v.shape) != t["shape"] or not v.is_contiguous() or v.dtype not in (torch.float16, torch.float32):
+            errors.append(f"tensor {t['key']}")
+    return errors
+
+
 if __name__ == "__main__":  # self-check of the contract example in 17.4
     kyubey = [1025, 32, 192, 192, 768, 2, 6, 3, 0, "1", [3, 7, 11], [[1, 3, 5]] * 3, [10, 10, 2, 2], 512,
               [16, 16, 4, 4], 109, 256, 40000]

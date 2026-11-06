@@ -41,8 +41,20 @@ app needs locally.
 ..\.venv\Scripts\python make_fixtures.py  # tests/fixtures/<case>/ for vitest (needs reference.py output)
 ```
 
-`verify_onnx.py` also checks that the public `.pth` files pass the browser's allowlist reader
-(`docs/dev/architecture/spikes/pth-reader.mjs`, needs Node).
+`verify_onnx.py` also checks that the public `.pth` files follow the browser reader's rules
+(STORED zip, allowlisted pickle opcodes and globals, contiguous fp16/fp32 tensors matching the manifest;
+`common.check_pth`). Run one group with e.g. `verify_onnx.py rvc-long` or `verify_onnx.py pth`.
+
+### Test fixtures
+
+`tests/fixtures/` is git-ignored (74 MB). Generate it before running the vitest fixture tests:
+
+```
+..\.venv\Scripts\python reference.py       # once; the song cases read weights/reference
+..\.venv\Scripts\python make_fixtures.py   # all cases, or --only resample filtfilt stft rms faiss (no weights needed)
+```
+
+Without fixtures those tests are skipped.
 
 ## Upload to Hugging Face
 
@@ -56,7 +68,8 @@ app needs locally.
    ```
 
    This uploads every file, then `registry.json` with that commit as `revision`, copies the registry to
-   `src/models/registry.gen.json`, and prints the value for the app build:
+   `src/models/registry.gen.json` (commit that file: the app checks every download against its sha256),
+   and prints the value for the app build:
    `VITE_MODEL_BASE_URL=https://huggingface.co/<user>/web-rvc-models/resolve/<commit>/`.
 
    The app needs anonymous download (CORS from HF works for public repos; a private repo is only
@@ -64,7 +77,18 @@ app needs locally.
 
 Manual alternative: upload the contents of `weights/dist/` as-is (same relative paths) with the HF web
 UI or `hf upload <user>/web-rvc-models weights/dist .`, then set the base URL to the
-resulting commit. Cloudflare R2 works the same way: copy the tree to `<bucket>/<revision>/`.
+resulting commit, and run `publish.py --app-registry` so the bundled registry matches the uploaded files.
+
+## Cloudflare R2 (instead of Hugging Face)
+
+There is no R2 upload command. Upload the contents of `weights/dist/` unchanged to
+`<bucket>/<revision>/` (any S3 client or the dashboard), set the bucket CORS, and build the app with
+`VITE_MODEL_BASE_URL=https://<r2 public domain>/<revision>/`:
+
+```
+[{"AllowedOrigins":["https://<user>.github.io"],"AllowedMethods":["GET","HEAD"],"AllowedHeaders":["Range"],
+  "ExposeHeaders":["Content-Length","Content-Range","ETag"],"MaxAgeSeconds":86400}]
+```
 
 ## Files
 

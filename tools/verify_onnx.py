@@ -6,7 +6,6 @@ Real audio comes from weights/reference (run reference.py first); without it, no
 """
 import json
 import os
-import subprocess
 import sys
 
 import librosa
@@ -188,17 +187,11 @@ def check_rvc_long():
 
 
 def check_pth_reader():
-    """17.3: public .pth files must pass the browser allowlist reader (spikes/pth-reader.mjs)."""
-    reader = os.path.join(ROOT, "docs", "dev", "architecture", "spikes", "pth-reader.mjs")
-    if not os.path.exists(reader):
-        print("pth-reader.mjs not found, skipped")
-        return
-    files = [dist(m, n + ".pth") for m, n in (("contentvec", "contentvec"), ("rmvpe", "rmvpe"), ("uvr", "uvr-hp-vocal"))]
-    out = subprocess.run(["node", os.path.join(os.path.dirname(__file__), "check_pth.mjs"), reader, *files],
-                         capture_output=True, text=True)
-    print(out.stdout + out.stderr)
-    RESULTS["pth-reader"] = {"ok": out.returncode == 0}
-
+    """17.3: public .pth files must pass the browser's allowlist reader rules (common.check_pth)."""
+    from common import check_pth
+    for mid, name in (("contentvec", "contentvec"), ("rmvpe", "rmvpe"), ("uvr", "uvr-hp-vocal")):
+        errors = check_pth(dist(mid, name + ".pth"), dist(mid, name + ".manifest.json"))
+        report(f"pth {name}", errors=len(errors), first=errors[0] if errors else "-", ok=not errors)
 
 if __name__ == "__main__":
     checks = {"contentvec": check_contentvec, "rmvpe": check_rmvpe, "uvr": check_uvr, "rvc": check_rvc, "rvc-long": check_rvc_long,
