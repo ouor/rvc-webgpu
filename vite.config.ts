@@ -3,6 +3,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { resolve, normalize, sep } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 // Same headers the service worker injects in production (src/sw.ts). Only WASM threads need them.
@@ -50,6 +51,7 @@ export default defineConfig({
   base: process.env.BASE_PATH ?? '/',
   plugins: [
     react(),
+    tailwindcss(),
     serveDirs(),
     VitePWA({
       strategies: 'injectManifest',

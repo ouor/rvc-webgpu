@@ -1,0 +1,163 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* Design tokens: docs/dev/design/mockups/assets/tokens.css (HSL channels, shadcn convention). Shadows renamed --elev-* to avoid clashing with Tailwind's --shadow-* theme vars. */
+:root {
+  --background: 220 20% 97%;
+  --foreground: 222 24% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 24% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 24% 12%;
+  --primary: 221 100% 59%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 16% 94%;
+  --secondary-foreground: 222 24% 20%;
+  --muted: 220 16% 94%;
+  --muted-foreground: 220 9% 44%;
+  --accent: 221 100% 96%;
+  --accent-foreground: 221 90% 45%;
+  --destructive: 0 78% 56%;
+  --destructive-foreground: 0 0% 100%;
+  --destructive-soft: 0 90% 97%;
+  --success: 152 60% 38%;
+  --success-foreground: 0 0% 100%;
+  --success-soft: 150 60% 95%;
+  --warning: 32 95% 44%;
+  --warning-foreground: 0 0% 100%;
+  --warning-soft: 40 100% 95%;
+  --border: 220 14% 90%;
+  --input: 220 14% 86%;
+  --ring: 221 100% 59%;
+  --stem-vocal: 262 80% 62%;
+  --stem-inst: 174 62% 38%;
+  --stem-mix: 221 100% 59%;
+  --stem-orig: 220 9% 62%;
+  --overlay: 222 30% 8%;
+  --radius: 0.75rem;
+  --elev-card: 0 1px 2px rgb(16 24 40 / .04), 0 1px 3px rgb(16 24 40 / .06);
+  --elev-pop: 0 4px 12px rgb(16 24 40 / .08), 0 2px 4px rgb(16 24 40 / .04);
+  --elev-float: 0 -4px 24px rgb(16 24 40 / .08), 0 12px 32px rgb(16 24 40 / .12);
+}
+.dark {
+  --background: 222 18% 8%;
+  --foreground: 220 20% 94%;
+  --card: 222 16% 12%;
+  --card-foreground: 220 20% 94%;
+  --popover: 222 16% 14%;
+  --popover-foreground: 220 20% 94%;
+  --primary: 221 100% 64%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 222 14% 18%;
+  --secondary-foreground: 220 20% 90%;
+  --muted: 222 14% 17%;
+  --muted-foreground: 220 10% 64%;
+  --accent: 221 60% 18%;
+  --accent-foreground: 221 100% 78%;
+  --destructive: 0 72% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --destructive-soft: 0 50% 15%;
+  --success: 152 55% 48%;
+  --success-foreground: 222 18% 8%;
+  --success-soft: 152 40% 13%;
+  --warning: 38 92% 58%;
+  --warning-foreground: 222 18% 8%;
+  --warning-soft: 38 60% 13%;
+  --border: 222 12% 20%;
+  --input: 222 12% 26%;
+  --ring: 221 100% 64%;
+  --stem-vocal: 262 85% 72%;
+  --stem-inst: 174 60% 50%;
+  --stem-mix: 221 100% 64%;
+  --stem-orig: 220 10% 50%;
+  --overlay: 222 30% 3%;
+  --elev-card: 0 0 0 1px hsl(222 12% 18%);
+  --elev-pop: 0 8px 24px rgb(0 0 0 / .4);
+  --elev-float: 0 -8px 32px rgb(0 0 0 / .45);
+}
+
+/* Tailwind mapping of the tokens (mockups/assets/app.js tailwind.config, v4 syntax). */
+@theme inline {
+  --font-sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-destructive-soft: hsl(var(--destructive-soft));
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  --color-success-soft: hsl(var(--success-soft));
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-warning-soft: hsl(var(--warning-soft));
+  --color-stem-vocal: hsl(var(--stem-vocal));
+  --color-stem-inst: hsl(var(--stem-inst));
+  --color-stem-mix: hsl(var(--stem-mix));
+  --color-stem-orig: hsl(var(--stem-orig));
+  --color-overlay: hsl(var(--overlay));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: calc(var(--radius) - 4px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --shadow-card: var(--elev-card);
+  --shadow-pop: var(--elev-pop);
+  --shadow-float: var(--elev-float);
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-small: 13px;
+  --text-small--line-height: 18px;
+  --text-body: 15px;
+  --text-body--line-height: 22px;
+  --text-lead: 17px;
+  --text-lead--line-height: 26px;
+  --text-h3: 16px;
+  --text-h3--line-height: 24px;
+  --text-h3--font-weight: 600;
+  --text-h2: 18px;
+  --text-h2--line-height: 26px;
+  --text-h2--font-weight: 700;
+  --text-h1: 22px;
+  --text-h1--line-height: 30px;
+  --text-h1--font-weight: 700;
+  --text-display: 28px;
+  --text-display--line-height: 36px;
+  --text-display--font-weight: 700;
+  --animate-indet: indet 1.4s ease-in-out infinite;
+  @keyframes indet {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(250%); }
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  html { @apply font-sans; }
+  body { @apply bg-background text-foreground text-body antialiased; letter-spacing: -0.01em; }
+  button:not(:disabled), [role='button']:not([aria-disabled='true']) { cursor: pointer; }
+  :focus-visible { outline-color: hsl(var(--ring)); }
+}
+
+@utility tnum { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-indet, .animate-spin, .animate-pulse { animation: none !important; }
+}
