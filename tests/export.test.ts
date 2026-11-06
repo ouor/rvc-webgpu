@@ -33,7 +33,9 @@ describe('export encode / zip (I-13)', () => {
   it('zip entries are byte-identical to encode(); scale prevents 16-bit clipping', async () => {
     const a = st(1000, 1.125), scale = 0.999 / 1.125;
     const wav = new Uint8Array(await (await exportApi.encode(a, 'pcm16', scale)).arrayBuffer());
-    const z = unzipSync(new Uint8Array(await (await exportApi.zip([{ name: 'a.wav', audio: a, scale }, { name: 'settings.txt', text: 'key +2' }], 'pcm16')).arrayBuffer()));
+    const prog: number[] = [];
+    const z = unzipSync(new Uint8Array(await (await exportApi.zip([{ name: 'a.wav', audio: a, scale }, { name: 'settings.txt', text: 'key +2' }], 'pcm16', (d) => prog.push(d))).arrayBuffer()));
+    expect(prog).toEqual([1, 2]);
     expect(z['a.wav']).toEqual(wav);
     expect(new TextDecoder().decode(z['settings.txt'])).toBe('key +2');
     const pcm = new Int16Array(wav.buffer, 44, 2000);

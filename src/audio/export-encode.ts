@@ -6,7 +6,8 @@ import { encodeAudio, type AudioFormat } from './wav';
 export type PlainAudio = Mono | Stereo;
 export interface ZipFile { name: string; audio?: PlainAudio; scale?: number; text?: string }
 
-async function zip(files: ZipFile[], fmt: AudioFormat): Promise<Blob> {
+/** `onProgress(done, total)` after each file (files, not bytes). */
+async function zip(files: ZipFile[], fmt: AudioFormat, onProgress?: (done: number, total: number) => void): Promise<Blob> {
   const parts: Uint8Array[] = [];
   let fail: Error | undefined;
   const z = new Zip((err, chunk) => { if (err) fail = err; else parts.push(chunk); });
@@ -16,6 +17,7 @@ async function zip(files: ZipFile[], fmt: AudioFormat): Promise<Blob> {
     const e = new ZipPassThrough(f.name);
     z.add(e);
     e.push(bytes, true);
+    onProgress?.(files.indexOf(f) + 1, files.length);
   }
   z.end();
   if (fail) throw fail;

@@ -130,7 +130,7 @@ export interface RecentSummary {
 }
 
 /** myModels.list() entry: the model info plus when it was saved and last opened (ms since epoch). */
-export interface SavedModel extends RvcModelInfo { savedAt: number; lastUsed: number }
+export interface SavedModel extends RvcModelInfo { savedAt: number; lastUsed: number; memo: string /* I-10, '' when none */ }
 
 /** cache.importFiles() result per given file. */
 export interface ImportResult { name: string; path?: string; status: 'imported' | 'unknown' | 'mismatch' }
@@ -182,6 +182,8 @@ export interface Engine {
     list(): Promise<SavedModel[]>; // most recently used first
     open(id: string): Promise<RvcModelInfo>;
     rename(id: string, name: string): Promise<void>;
+    /** I-10: memo text (trimmed, at most 500 chars); returns what was stored. */
+    setMemo(id: string, memo: string): Promise<string>;
     remove(id: string): Promise<void>;
   };
 }

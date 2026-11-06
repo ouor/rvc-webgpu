@@ -1,6 +1,9 @@
 // Synthetic stereo reverb impulse response: exponentially decaying noise (PRD MX-4). Deterministic.
 
-export function createReverbIR(ctx: BaseAudioContext, seconds = 2.2, decay = 3.5): AudioBuffer {
+/** IR length in seconds (tooltip text, I-17: "short room reverb, about 2.2 s"). */
+export const REVERB_SECONDS = 2.2;
+
+export function createReverbIR(ctx: BaseAudioContext, seconds = REVERB_SECONDS, decay = 3.5): AudioBuffer {
   const n = Math.floor(seconds * ctx.sampleRate);
   const ir = ctx.createBuffer(2, n, ctx.sampleRate);
   let s = 12345;

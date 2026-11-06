@@ -26,7 +26,8 @@ export function createExporter() {
     /** `scale` applies to 'pcm16' and 'mp3' (stems: Conformed.scale); 'f32' ignores it. */
     encode: (audio: PcmSource, fmt: AudioFormat, scale = 1): Promise<Blob> => get().encode(plain(audio), fmt, scale),
     /** STORE zip; each audio file is byte-identical to encode() with the same arguments. */
-    zip: (files: ExportFile[], fmt: AudioFormat): Promise<Blob> => get().zip(files.map((f) => ({ ...f, audio: f.audio && plain(f.audio) })), fmt),
+    zip: (files: ExportFile[], fmt: AudioFormat, onProgress?: (done: number, total: number) => void): Promise<Blob> =>
+      get().zip(files.map((f) => ({ ...f, audio: f.audio && plain(f.audio) })), fmt, onProgress && Comlink.proxy(onProgress)),
     terminate() { worker?.terminate(); worker = api = undefined; },
   };
 }

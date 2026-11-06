@@ -8,7 +8,7 @@ import { isMyModelId, MY_MODELS_ROOT, myModelDir, myModelFile, myModelIdOf } fro
 import { blobChunks, sha256Hex, type BlobStore } from './store';
 
 /** info.json, version 1. `info` is a display cache refreshed on every open; the model file is the truth. */
-interface SavedFileV1 { v: 1; savedAt: number; lastUsed: number; info: RvcModelInfo }
+interface SavedFileV1 { v: 1; savedAt: number; lastUsed: number; info: RvcModelInfo; memo?: string /* I-10, user text */ }
 /** Before versioning (2026-11-07): the flat SavedModel / RvcModelInfo object. */
 type SavedFileV0 = RvcModelInfo & { v?: undefined; savedAt?: number; lastUsed?: number };
 
@@ -21,7 +21,9 @@ function migrate(raw: SavedFileV1 | SavedFileV0): SavedFileV1 {
   throw new AppError('CACHE_INTEGRITY', `my-model info.json version ${(raw as { v: unknown }).v} is newer than this app`);
 }
 
-const toSaved = (f: SavedFileV1): SavedModel => ({ ...f.info, savedAt: f.savedAt, lastUsed: f.lastUsed });
+const toSaved = (f: SavedFileV1): SavedModel => ({ ...f.info, savedAt: f.savedAt, lastUsed: f.lastUsed, memo: f.memo ?? '' });
+
+export const MEMO_MAX = 500;
 
 export const modelIdOf = async (b: Blob) => (await sha256Hex(b)).slice(0, 16);
 
@@ -57,7 +59,7 @@ export class MyModelStore {
     if (index) await this.put(myModelFile(id, 'index'), index.file, prev?.info.index?.id === index.info.id);
     else await this.store().remove(myModelFile(id, 'index'));
     const now = Date.now();
-    await this.writeFile({ v: 1, savedAt: prev?.savedAt ?? now, lastUsed: now, info: { ...model.info, indexId: index?.info.id, index: index?.info } });
+    await this.writeFile({ v: 1, savedAt: prev?.savedAt ?? now, lastUsed: now, memo: prev?.memo, info: { ...model.info, indexId: index?.info.id, index: index?.info } });
   }
 
   /** Most recently used first; broken entries are skipped. */
@@ -93,6 +95,14 @@ export class MyModelStore {
     const n = name.trim() || f.info.name;
     await this.writeFile({ ...f, info: { ...f.info, name: n } });
     return n;
+  }
+
+  /** I-10: free text kept with the saved model (trimmed, at most MEMO_MAX chars). */
+  async setMemo(id: string, memo: string): Promise<string> {
+    const f = await this.readFile(id);
+    const m = memo.trim().slice(0, MEMO_MAX);
+    await this.writeFile({ ...f, memo: m });
+    return m;
   }
 
   async remove(id: string): Promise<void> { this.check(id); await this.store().remove(myModelDir(id)); }

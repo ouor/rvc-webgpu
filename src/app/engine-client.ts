@@ -40,7 +40,7 @@ export function createEngineClient(): EngineClient {
     },
     myModels: {
       save: (id, ix) => mine.save(id, ix), list: () => mine.list(),
-      open: (id) => mine.open(id), rename: (id, name) => mine.rename(id, name), remove: (id) => mine.remove(id),
+      open: (id) => mine.open(id), rename: (id, name) => mine.rename(id, name), setMemo: (id, m) => mine.setMemo(id, m), remove: (id) => mine.remove(id),
     },
     terminate: () => worker.terminate(),
   };
