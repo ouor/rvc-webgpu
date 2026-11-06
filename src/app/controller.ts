@@ -12,12 +12,18 @@ import { AUDIO_EXT, INDEX_EXT, MODEL_EXT, abLabel, download, effectiveMix, expor
 import { DEFAULT_BASE_URL, DEFAULT_OPTIONS, STEPS, confirmAsync, get, isBusy, selBusy, selEngineBusy, selModelBaseUrl, set, type Job, type Model, type Options, type Result, type Settings, type SettingsTab, type Step, type StepInfo } from './store';
 import { version } from '../../package.json';
 import { errText, t } from './i18n';
+import { gateCalls } from './lib/gate';
 
 // Engine rejections are always AppError (ENGINE_API §6); toAppError stays only where UI-thread code (decode, encode, render) can throw.
 const engineErr = (e: unknown) => e as AppError;
 const reason = (e: unknown) => ({ description: errText(engineErr(e)).title });
 
-const engine = createEngineClient();
+const client = createEngineClient();
+// A file dropped right after load must not reach the worker before init (INTERNAL "engine.init() not called"):
+// every call waits for the latest init to settle; a failed init lets them through to fail with their own error.
+let releaseFirst: ((p: Promise<void>) => void) | undefined;
+let initSettled = new Promise<void>((r) => { releaseFirst = r; });
+const engine = gateCalls(client, () => initSettled, ['init', 'cancel', 'terminate']);
 const RUNNING_FLAG = 'web-rvc:running'; // DESIGN S6: set while processing; still present on load = the tab died
 
 // ---------- environment ----------
@@ -25,7 +31,11 @@ const RUNNING_FLAG = 'web-rvc:running'; // DESIGN S6: set while processing; stil
 export async function initEngine() {
   set({ engineReady: false, envError: undefined });
   try {
-    const env = await engine.init({ backend: get().settings.backend, modelBaseUrl: selModelBaseUrl(get()) });
+    const init = client.init({ backend: get().settings.backend, modelBaseUrl: selModelBaseUrl(get()) });
+    initSettled = init.then(() => {}, () => {});
+    releaseFirst?.(initSettled);
+    releaseFirst = undefined;
+    const env = await init;
     set({ env, engineReady: true });
     void refreshPlan();
     void refreshLists();
