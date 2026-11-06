@@ -32,7 +32,7 @@ function RangeInputs() {
         <input aria-label={t('opt.rangeStart')} className={box} value={a} disabled={!duration} onChange={(e) => setA(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} />
         <span aria-hidden>–</span>
         <input aria-label={t('opt.rangeEnd')} className={box} value={b} disabled={!duration} onChange={(e) => setB(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} />
-        {range && <button type="button" className="text-caption font-semibold text-primary" onClick={() => setOpts({ range: undefined })}>{t('opt.rangeAll')}</button>}
+        {range && <button type="button" className="text-caption font-semibold text-accent-foreground" onClick={() => setOpts({ range: undefined })}>{t('opt.rangeAll')}</button>}
       </div>
       <p className="text-caption text-muted-foreground mt-1.5">{duration ? t('opt.rangeHint') : t('opt.rangeNoSong')}</p>
     </div>

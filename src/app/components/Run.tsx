@@ -210,7 +210,7 @@ function StepItem({ k, info, cancelling, rerunKeyOnly }: { k: Step; info: StepIn
   return (
     <li className={cn('rounded-xl p-3 min-w-0', active && 'bg-accent', info.state === 'error' && 'bg-destructive-soft', (info.state === 'wait' || info.state === 'skipped') && 'text-muted-foreground')} aria-current={active ? 'step' : undefined}>
       <div className="flex items-center gap-1.5">
-        <Icon className={cn('size-4 shrink-0', active && 'animate-spin text-primary', info.state === 'done' && 'text-success', info.state === 'reused' && 'text-primary', info.state === 'error' && 'text-destructive')} />
+        <Icon className={cn('size-4 shrink-0', active && 'animate-spin text-accent-foreground', info.state === 'done' && 'text-success', info.state === 'reused' && 'text-accent-foreground', info.state === 'error' && 'text-destructive')} />
         <span className={cn('text-small font-semibold truncate', info.state === 'skipped' && 'line-through')}>{name}</span>
       </div>
       <p className="text-caption mt-1 tnum truncate">{line}</p>

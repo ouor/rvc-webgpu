@@ -13,7 +13,7 @@ const toneCls: Record<Tone, string> = {
   warning: 'border-warning/40 bg-warning-soft',
   info: 'border-transparent bg-accent',
 };
-const toneIcon: Record<Tone, string> = { error: 'text-destructive', warning: 'text-warning', info: 'text-primary' };
+const toneIcon: Record<Tone, string> = { error: 'text-destructive', warning: 'text-warning', info: 'text-accent-foreground' };
 
 export function InlineError({ error, tone = 'error', file, title, body, actions, className }: {
   error?: AppError; tone?: Tone; file?: string; title?: ReactNode; body?: ReactNode; actions?: ReactNode; className?: string;
@@ -35,7 +35,7 @@ export function InlineError({ error, tone = 'error', file, title, body, actions,
             <details className="mt-2 text-caption">
               <summary className="cursor-pointer text-muted-foreground hover:text-foreground">{t('err.detail')}</summary>
               <pre className="mt-2 p-2 rounded-md bg-card font-mono text-[11px] whitespace-pre-wrap break-all max-h-40 overflow-auto">{detail}</pre>
-              <button type="button" className="mt-1 text-primary font-semibold" onClick={() => { void navigator.clipboard.writeText(detail); toast(t('toast.copied')); }}>{t('common.copy')}</button>
+              <button type="button" className="mt-1 text-accent-foreground font-semibold" onClick={() => { void navigator.clipboard.writeText(detail); toast(t('toast.copied')); }}>{t('common.copy')}</button>
             </details>
           )}
           {actions && <div className="mt-3 flex flex-wrap gap-2">{actions}</div>}

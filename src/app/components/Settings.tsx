@@ -59,7 +59,7 @@ function General() {
           {cards.map(([v, name, sub]) => (
             <button key={v} type="button" role="radio" aria-checked={settings.backend === v} disabled={busy || (v === 'webgpu' && env && !env.webgpu)} onClick={() => pick(v)}
               className="text-left rounded-xl border p-3 hover:bg-muted aria-checked:border-primary aria-checked:bg-accent disabled:opacity-45 disabled:cursor-not-allowed">
-              <p className="text-small font-semibold">{name} {v === 'auto' && <span className="text-caption text-primary">{t('set.recommended')}</span>}</p>
+              <p className="text-small font-semibold">{name} {v === 'auto' && <span className="text-caption text-accent-foreground">{t('set.recommended')}</span>}</p>
               <p className="text-caption text-muted-foreground mt-0.5">{v === 'webgpu' && env && !env.webgpu ? t('set.noWebgpu') : sub}</p>
             </button>
           ))}
@@ -241,9 +241,9 @@ function About() {
         <h3 className={h3}>{t('about.lameTitle')}</h3>
         <p className="text-small text-muted-foreground mt-1">{t('about.lame')}</p>
         <p className="text-caption mt-1.5 flex flex-wrap gap-x-3">
-          <a className="text-primary underline-offset-2 hover:underline" href="https://lame.sourceforge.io/" target="_blank" rel="noreferrer">lame.sourceforge.io</a>
-          <a className="text-primary underline-offset-2 hover:underline" href="https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" target="_blank" rel="noreferrer">LGPL-2.1</a>
-          <a className="text-primary underline-offset-2 hover:underline" href="https://github.com/Vanilagy/mediabunny" target="_blank" rel="noreferrer">mediabunny</a>
+          <a className="text-accent-foreground underline-offset-2 hover:underline" href="https://lame.sourceforge.io/" target="_blank" rel="noreferrer">lame.sourceforge.io</a>
+          <a className="text-accent-foreground underline-offset-2 hover:underline" href="https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" target="_blank" rel="noreferrer">LGPL-2.1</a>
+          <a className="text-accent-foreground underline-offset-2 hover:underline" href="https://github.com/Vanilagy/mediabunny" target="_blank" rel="noreferrer">mediabunny</a>
         </p>
       </div>
       <Button variant="secondary"  onClick={copyEnvInfo}><Clipboard />{t('about.copyEnv')}</Button>

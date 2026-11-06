@@ -94,7 +94,7 @@ export function FirstRunNotice() {
   if (ack) return null;
   return (
     <div className="mb-5 flex items-start gap-3 rounded-xl bg-card shadow-card px-5 py-4">
-      <Info className="size-5 text-primary mt-0.5 shrink-0" />
+      <Info className="size-5 text-accent-foreground mt-0.5 shrink-0" />
       <div className="flex-1">
         <p className="font-semibold">{t('notice.title')}</p>
         <p className="text-small text-muted-foreground mt-0.5">{t('notice.body')}</p>

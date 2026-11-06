@@ -110,7 +110,7 @@ function MyModelPicker() {
               ))}
             </CommandGroup>
           </CommandList>
-          <button type="button" className="w-full border-t px-3 h-10 text-left text-small font-semibold text-primary hover:bg-muted" onClick={() => { setOpen(false); openSettings('models'); }}>{t('mine.manage')}</button>
+          <button type="button" className="w-full border-t px-3 h-10 text-left text-small font-semibold text-accent-foreground hover:bg-muted" onClick={() => { setOpen(false); openSettings('models'); }}>{t('mine.manage')}</button>
         </Command>
       </PopoverContent>
     </Popover>
@@ -132,9 +132,9 @@ function IndexRow() {
       {!index ? <>
         <span className="size-4 rounded-full border-2 border-dashed border-muted-foreground/50 shrink-0" />
         <span className="flex-1 text-muted-foreground">{t('index.none')}</span>
-        {!busy && <button type="button" className="text-small font-semibold text-primary" onClick={() => pickFiles(INDEX_ACCEPT)}>{t('index.add')}</button>}
+        {!busy && <button type="button" className="text-small font-semibold text-accent-foreground" onClick={() => pickFiles(INDEX_ACCEPT)}>{t('index.add')}</button>}
       </> : index.status === 'parsing' ? <>
-        <Loader2 className="size-4 animate-spin text-primary shrink-0" /><span className="flex-1 truncate">{t('index.parsing')}</span>
+        <Loader2 className="size-4 animate-spin text-accent-foreground shrink-0" /><span className="flex-1 truncate">{t('index.parsing')}</span>
       </> : <>
         <CircleCheck className="size-4 text-success shrink-0" />
         <span className="truncate flex-1" title={index.fileName}>
