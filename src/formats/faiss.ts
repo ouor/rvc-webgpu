@@ -9,6 +9,7 @@ export interface IvfIndex {
   nprobe: number;
   centroids: Float32Array; // nlist * d (empty for a flat index)
   lists: Float32Array[]; // vectors per list, row-major n * d
+  ids: Int32Array[]; // original row (faiss label) of each vector, per list
   nVectors: number; // vectors kept
   ntotal: number; // vectors in the file
 }
@@ -60,13 +61,15 @@ function keeper(keep: number, total: number) {
   return () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return (s >>> 0) / 4294967296 < p; };
 }
 
-function sample(vecs: Float32Array, d: number, take: () => boolean): Float32Array {
+function sample(vecs: Float32Array, ids: Int32Array, d: number, take: () => boolean): [Float32Array, Int32Array] {
   const n = vecs.length / d;
-  const out = new Float32Array(vecs.length);
+  const out = new Float32Array(vecs.length), oid = new Int32Array(n);
   let m = 0;
-  for (let i = 0; i < n; i++) if (take()) out.set(vecs.subarray(i * d, i * d + d), m++ * d);
-  return out.slice(0, m * d);
+  for (let i = 0; i < n; i++) if (take()) { out.set(vecs.subarray(i * d, i * d + d), m * d); oid[m++] = ids[i]; }
+  return [out.slice(0, m * d), oid.slice(0, m)];
 }
+
+const iota = (n: number) => Int32Array.from({ length: n }, (_, i) => i);
 
 export async function readFaissIndex(blob: Blob, cap = MAX_VECTORS): Promise<IvfIndex> {
   const c = new Cursor(blob);
@@ -75,8 +78,8 @@ export async function readFaissIndex(blob: Blob, cap = MAX_VECTORS): Promise<Ivf
   if (h === fourcc('IxF2')) {
     const f = await readFlat(c);
     if (f.ntotal === 0) throw new AppError('INDEX_EMPTY', 'index has no vectors (trained_*.index?)');
-    const vecs = f.ntotal > cap ? sample(f.data, f.d, keeper(cap, f.ntotal)) : f.data;
-    return { d: f.d, nlist: 1, nprobe: 1, centroids: new Float32Array(0), lists: [vecs], nVectors: vecs.length / f.d, ntotal: f.ntotal };
+    const [vecs, ids] = f.ntotal > cap ? sample(f.data, iota(f.ntotal), f.d, keeper(cap, f.ntotal)) : [f.data, iota(f.ntotal)];
+    return { d: f.d, nlist: 1, nprobe: 1, centroids: new Float32Array(0), lists: [vecs], ids: [ids], nVectors: ids.length, ntotal: f.ntotal };
   }
   if (h !== fourcc('IwFl')) throw unsupported('unsupported faiss index type 0x' + (h >>> 0).toString(16));
 
@@ -108,16 +111,18 @@ export async function readFaissIndex(blob: Blob, cap = MAX_VECTORS): Promise<Ivf
   } else throw unsupported('unknown list size encoding');
 
   const take = keeper(cap, ntotal);
-  const lists: Float32Array[] = [];
+  const lists: Float32Array[] = [], idLists: Int32Array[] = [];
   let kept = 0;
   for (let i = 0; i < nlist; i++) {
     const n = sizes[i];
-    if (n === 0) { lists.push(new Float32Array(0)); continue; }
+    if (n === 0) { lists.push(new Float32Array(0)); idLists.push(new Int32Array(0)); continue; }
     const v = new Float32Array(await c.take(n * codeSize));
-    c.skip(n * 8); // ids: rows in big_npy; not needed because we keep the vectors themselves
-    const l = ntotal > cap ? sample(v, d, take) : v;
-    kept += l.length / d;
+    const id64 = new BigInt64Array(await c.take(n * 8)); // labels = rows of big_npy (reconstruct_n order)
+    const ids = Int32Array.from(id64, Number);
+    const [l, li] = ntotal > cap ? sample(v, ids, d, take) : [v, ids];
+    kept += li.length;
     lists.push(l);
+    idLists.push(li);
   }
-  return { d, nlist, nprobe: Math.max(1, Math.min(nprobe, nlist)), centroids: q.data, lists, nVectors: kept, ntotal };
+  return { d, nlist, nprobe: Math.max(1, Math.min(nprobe, nlist)), centroids: q.data, lists, ids: idLists, nVectors: kept, ntotal };
 }

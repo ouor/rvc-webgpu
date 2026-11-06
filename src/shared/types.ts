@@ -92,3 +92,28 @@ export const DEFAULT_CONVERT: ConvertParams = {
   f0UpKey: 0, indexRate: 0.75, protect: 0.33, rmsMixRate: 0.25, sid: 0, chunkProfile: 'normal', seed: 0,
 };
 export const DEFAULT_SEPARATE: SeparateParams = { modelId: 'uvr-hp-vocal', aggressiveness: 10 };
+
+// ---- Engine API exposed by the worker (ARCHITECTURE §6.2); implemented in engine/engine.ts ----
+
+export type OnProgress = (p: Progress) => void;
+
+export interface Engine {
+  init(opts: { backend: BackendPref; modelBaseUrl: string }): Promise<EnvReport>;
+  setInput(audio: Stereo, meta: { name: string; size: number; lastModified: number }): Promise<string>;
+  loadRvcModel(file: File): Promise<RvcModelInfo>;
+  setOnnxModelSr(modelId: string, sr: 32000 | 40000 | 48000): Promise<void>;
+  loadIndex(file: File): Promise<IndexInfo>;
+  plan(job: JobSpec): Promise<DownloadItem[]>;
+  download(ids: string[], onProgress: OnProgress): Promise<void>;
+  run(job: JobSpec, onProgress: OnProgress): Promise<JobResult>;
+  /** Stems of the last separation (available as soon as the separate stage finishes, also during run). */
+  getStems(): Promise<{ vocals: Stereo; instrumental: Stereo } | null>;
+  cancel(): void;
+  cache: { list(): Promise<CacheEntry[]>; remove(id: string): Promise<void>; clear(): Promise<void> };
+  myModels: {
+    save(modelId: string, indexId?: string): Promise<void>;
+    list(): Promise<RvcModelInfo[]>;
+    open(id: string): Promise<RvcModelInfo>;
+    remove(id: string): Promise<void>;
+  };
+}
