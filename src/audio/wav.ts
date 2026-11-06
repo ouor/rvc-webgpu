@@ -11,7 +11,8 @@ function channels(src: PcmSource): { sr: number; ch: Float32Array[] } {
   return { sr: src.sr, ch: [src.l, src.r] };
 }
 
-export function encodeWav(src: PcmSource, fmt: 'pcm16' | 'f32' = 'pcm16'): Blob {
+/** `scale` (pcm16 only): stem batch factor against clipping (I-14); f32 keeps the samples as they are. */
+export function encodeWav(src: PcmSource, fmt: 'pcm16' | 'f32' = 'pcm16', scale = 1): Blob {
   const { sr, ch } = channels(src);
   const n = ch[0].length, nc = ch.length, bps = fmt === 'pcm16' ? 2 : 4;
   const data = n * nc * bps;
@@ -26,13 +27,13 @@ export function encodeWav(src: PcmSource, fmt: 'pcm16' | 'f32' = 'pcm16'): Blob 
   for (let i = 0; i < n; i++) for (let c = 0; c < nc; c++, o += bps) {
     const x = ch[c][i];
     if (fmt === 'f32') v.setFloat32(o, x, true);
-    else v.setInt16(o, Math.max(-32768, Math.min(32767, Math.round(x * 32767))), true);
+    else v.setInt16(o, Math.max(-32768, Math.min(32767, Math.round(x * scale * 32767))), true);
   }
   return new Blob([buf], { type: 'audio/wav' });
 }
 
 /** MP3 via mediabunny + its LAME WASM encoder, loaded only when first used (code-split). */
-export async function encodeMp3(src: PcmSource, bitrate = 192_000): Promise<Blob> {
+export async function encodeMp3(src: PcmSource, bitrate = 320_000, scale = 1): Promise<Blob> { // MX-5: 320 kbps CBR
   const { sr, ch } = channels(src);
   const mb = await import('mediabunny');
   if (!(await mb.canEncodeAudio('mp3'))) (await import('@mediabunny/mp3-encoder')).registerMp3Encoder();
@@ -44,7 +45,7 @@ export async function encodeMp3(src: PcmSource, bitrate = 192_000): Promise<Blob
   for (let s = 0; s < ch[0].length; s += block) {
     const len = Math.min(block, ch[0].length - s);
     const inter = new Float32Array(len * ch.length);
-    for (let i = 0; i < len; i++) for (let c = 0; c < ch.length; c++) inter[i * ch.length + c] = ch[c][s + i];
+    for (let i = 0; i < len; i++) for (let c = 0; c < ch.length; c++) inter[i * ch.length + c] = ch[c][s + i] * scale;
     const sample = new mb.AudioSample({ data: inter, format: 'f32', numberOfChannels: ch.length, sampleRate: sr, timestamp: s / sr });
     await source.add(sample);
     sample.close();
@@ -55,4 +56,5 @@ export async function encodeMp3(src: PcmSource, bitrate = 192_000): Promise<Blob
   return new Blob([out], { type: 'audio/mpeg' });
 }
 
-export const encodeAudio = (src: PcmSource, fmt: AudioFormat) => (fmt === 'mp3' ? encodeMp3(src) : Promise.resolve(encodeWav(src, fmt)));
+export const encodeAudio = (src: PcmSource, fmt: AudioFormat, scale = 1) =>
+  (fmt === 'mp3' ? encodeMp3(src, undefined, scale) : Promise.resolve(encodeWav(src, fmt, scale)));
