@@ -106,7 +106,7 @@ export function FirstRunNotice() {
 }
 
 const NARROW = '(max-width: 767px)';
-const phone = () => /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) && navigator.maxTouchPoints > 0;
+const PHONE = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) && navigator.maxTouchPoints > 0; // a device does not change
 
 /** QA B15: follows window resizes (a phone stays a phone). */
 function useMobile() {
@@ -117,7 +117,7 @@ function useMobile() {
     mq.addEventListener('change', on);
     return () => mq.removeEventListener('change', on);
   }, []);
-  return narrow || phone();
+  return narrow || PHONE;
 }
 
 export function MobileGate() {
