@@ -11,8 +11,8 @@ import { InlineError, NoticeButton } from './Notice';
 import { AudioPlayer, usePlayer } from './Player';
 import { AUDIO_ACCEPT, INDEX_ACCEPT, MODEL_ACCEPT, fmtBytes, fmtHz, fmtModelSize, fmtTime, indexBytes } from '../lib/format';
 import { cn } from '../lib/utils';
-import { clearIndex, clearModel, clearSong, openMyModel, openSettings, saveMine, setOnnxSr, setOpts, tryClip } from '../controller';
-import { selBusy, useApp } from '../store';
+import { clearBacking, clearIndex, clearModel, clearSong, openMyModel, openSettings, saveMine, setOnnxSr, setOpts, tryClip } from '../controller';
+import { selBusy, useApp, type Song } from '../store';
 import { useT } from '../i18n';
 
 const iconBtn = 'grid place-items-center size-8 rounded-lg hover:bg-card text-muted-foreground hover:text-foreground';
@@ -50,44 +50,61 @@ function SongPreview() {
   );
 }
 
+/** One audio file: dropzone, error, or the file row. `slot` routes it to the backing slot in stems mode. */
+function AudioSlot({ f, title, height, slot, onRemove, removeLabel }: {
+  f?: Song; title: string; height: number; slot?: 'backing'; onRemove: () => void; removeLabel: string;
+}) {
+  const t = useT();
+  const busy = useApp(selBusy);
+  if (!f || f.status === 'parsing') {
+    return <Dropzone icon={<Music className="size-6" />} title={title} hint={t('drop.songHint')} accept={AUDIO_ACCEPT} height={height} slot={slot}
+      parsing={f?.status === 'parsing' ? t('drop.songParsing', { name: f.name }) : undefined} />;
+  }
+  if (f.status === 'error') {
+    return <InlineError error={f.error} file={f.name} actions={<NoticeButton onClick={() => pickFiles(AUDIO_ACCEPT, false, slot)}>{t('common.pickOther')}</NoticeButton>} />;
+  }
+  return (
+    <div className="flex items-center gap-3 rounded-xl bg-muted/60 p-3">
+      <span className={cn('grid place-items-center size-10 rounded-lg bg-card shrink-0', slot ? 'text-stem-inst' : 'text-stem-mix')}><Music className="size-5" /></span>
+      <div className="min-w-0 flex-1">
+        <p className="font-semibold truncate" title={f.name}>{f.name}</p>
+        <p className="text-caption text-muted-foreground tnum">
+          {[fmtTime(f.duration ?? 0), f.sourceRate && fmtHz(f.sourceRate), f.channels === 1 ? t('meta.mono') : t('meta.stereo'), fmtBytes(f.size)].filter(Boolean).join(' · ')}
+        </p>
+      </div>
+      {!busy && <>
+        <button type="button" className="h-8 px-3 rounded-lg text-small font-semibold hover:bg-card" onClick={() => pickFiles(AUDIO_ACCEPT, false, slot)}>{t('common.replace')}</button>
+        <button type="button" className={iconBtn} aria-label={removeLabel} onClick={onRemove}><X className="size-4" /></button>
+      </>}
+    </div>
+  );
+}
+
 export function SongCard() {
   const t = useT();
   const song = useApp((s) => s.song);
+  const backing = useApp((s) => s.backing);
   const mode = useApp((s) => s.opts.mode);
-  const busy = useApp(selBusy);
+  const stems = mode === 'stems';
+  const gap = stems && song?.duration && backing?.duration ? Math.abs(song.duration - backing.duration) : 0;
   return (
     <StepCard n={1} id="c1" title={t('card.song')}>
-      {!song || song.status === 'parsing' ? (
-        <Dropzone icon={<Music className="size-6" />} title={t('drop.songTitle')} hint={t('drop.songHint')} accept={AUDIO_ACCEPT} height={236}
-          parsing={song?.status === 'parsing' ? t('drop.songParsing', { name: song.name }) : undefined} />
-      ) : song.status === 'error' ? (
-        <InlineError error={song.error} file={song.name} actions={<NoticeButton onClick={() => pickFiles(AUDIO_ACCEPT)}>{t('common.pickOther')}</NoticeButton>} />
-      ) : (
-        <div>
-          <div className="flex items-center gap-3 rounded-xl bg-muted/60 p-3">
-            <span className="grid place-items-center size-10 rounded-lg bg-card text-stem-mix shrink-0"><Music className="size-5" /></span>
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold truncate" title={song.name}>{song.name}</p>
-              <p className="text-caption text-muted-foreground tnum">
-                {[fmtTime(song.duration ?? 0), song.sourceRate && fmtHz(song.sourceRate), song.channels === 1 ? t('meta.mono') : t('meta.stereo'), fmtBytes(song.size)].filter(Boolean).join(' · ')}
-              </p>
-            </div>
-            {!busy && <>
-              <button type="button" className="h-8 px-3 rounded-lg text-small font-semibold hover:bg-card" onClick={() => pickFiles(AUDIO_ACCEPT)}>{t('common.replace')}</button>
-              <button type="button" className={iconBtn} aria-label={t('song.remove')} onClick={clearSong}><X className="size-4" /></button>
-            </>}
-          </div>
-          {(song.duration ?? 0) > 600 && (
-            <InlineError className="mt-3" tone="warning" title={t('err.AUDIO_LONG.title', { t: fmtTime(song.duration!) })} body={t('err.AUDIO_LONG.body')} />
-          )}
-          <SongPreview />
-        </div>
+      {stems && <p className="text-small font-semibold mb-2">{t('stems.vocal')}</p>}
+      <AudioSlot f={song} title={stems ? t('drop.vocalTitle') : t('drop.songTitle')} height={stems ? 112 : 236} onRemove={clearSong} removeLabel={t('song.remove')} />
+      {song?.status === 'ready' && (song.duration ?? 0) > 600 && (
+        <InlineError className="mt-3" tone="warning" title={t('err.AUDIO_LONG.title', { t: fmtTime(song.duration!) })} body={t('err.AUDIO_LONG.body')} />
       )}
+      {song?.status === 'ready' && <SongPreview />}
+      {stems && <>
+        <p className="text-small font-semibold mt-4 mb-2">{t('stems.backing')}</p>
+        <AudioSlot f={backing} slot="backing" title={t('drop.backingTitle')} height={112} onRemove={clearBacking} removeLabel={t('stems.removeBacking')} />
+        {gap > 1 && <InlineError className="mt-3" tone="warning" title={t('stems.lenDiff', { n: Math.round(gap) })} />}
+      </>}
       <div className="mt-5">
         <p className="text-small font-semibold mb-2 flex items-center gap-1">{t('mode.label')}<HelpTip text={t('mode.help')} /></p>
         <Segmented size="md" className="w-full" label={t('mode.label')} value={mode} onChange={(m) => setOpts({ mode: m })}
-          items={[{ value: 'song', label: t('mode.song') }, { value: 'voice', label: t('mode.voice') }]} />
-        <p className="text-caption text-muted-foreground mt-2">{mode === 'song' ? t('mode.songNote') : t('mode.voiceNote')}</p>
+          items={[{ value: 'song', label: t('mode.song') }, { value: 'voice', label: t('mode.voice') }, { value: 'stems', label: t('mode.stems') }]} />
+        <p className="text-caption text-muted-foreground mt-2">{t(mode === 'song' ? 'mode.songNote' : mode === 'voice' ? 'mode.voiceNote' : 'mode.stemsNote')}</p>
       </div>
     </StepCard>
   );

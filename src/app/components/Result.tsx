@@ -85,7 +85,7 @@ function Hero({ result, cur }: { result: Result; cur: Result }) {
   const stems = useMemo(() => ({ vocal: cur.converted, inst: cur.inst }), [cur]);
   const live = useMemo(() => effectiveMix(mix, mute, solo), [mix, mute, solo]);
   const player = usePlayer(stems, live);
-  const song = cur.mode === 'song';
+  const song = cur.mode !== 'voice';
   const busy = useApp(selBusy);
   const title = useRef<HTMLHeadingElement>(null);
   useEffect(() => { title.current?.focus(); }, [result.seq]); // QA B9: focus lands on the new result
@@ -93,7 +93,7 @@ function Hero({ result, cur }: { result: Result; cur: Result }) {
   // DESIGN 6 shortcuts: Space play, arrows +-5 s, A/B compare (not while typing or on a control).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest('input,textarea,select,button,[role=slider],[role=radio],[role=combobox],[contenteditable],[role=dialog]')) return;
+      if ((e.target as HTMLElement).closest?.('input,textarea,select,button,[role=slider],[role=radio],[role=combobox],[contenteditable],[role=dialog]')) return;
       if (e.key === ' ') { e.preventDefault(); toggle(player); }
       else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); seek(player, player.position + (e.key === 'ArrowRight' ? 5 : -5)); }
       else if ((e.key === 'a' || e.key === 'A') && prev) setAB('A');
@@ -220,7 +220,7 @@ function FormatPicker({ seconds, voice }: { seconds: number; voice: boolean }) {
 
 function Files({ cur }: { cur: Result }) {
   const t = useT();
-  const song = cur.mode === 'song';
+  const song = cur.mode !== 'voice';
   const seconds = (cur.inst ?? cur.converted).duration;
   return (
     <section className="rounded-2xl bg-card shadow-card p-6">

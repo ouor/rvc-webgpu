@@ -26,7 +26,7 @@ export interface Settings {
 }
 
 export interface Options {
-  mode: 'song' | 'voice';
+  mode: 'song' | 'voice' | 'stems';
   key: number;
   indexRate: number;
   protect: number;
@@ -42,6 +42,7 @@ export interface Song {
   status: 'parsing' | 'ready' | 'error';
   name: string;
   size: number;
+  lastModified?: number;
   duration?: number;
   channels?: number;
   sourceRate?: number;
@@ -129,6 +130,8 @@ export interface State {
   crashed: boolean;
   dismissed: string[];
   song?: Song;
+  /** I-20 stems mode: the backing file; `song` is then the vocal file. */
+  backing?: Song;
   model?: Model;
   index?: IndexState;
   plan?: DownloadItem[];

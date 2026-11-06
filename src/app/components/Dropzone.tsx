@@ -7,12 +7,12 @@ import { cn } from '../lib/utils';
 import { addFiles } from '../controller';
 import { useT } from '../i18n';
 
-export function Dropzone({ icon, title, hint, accept, multiple, height, parsing, disabled }: {
-  icon: ReactNode; title: string; hint: string; accept: string; multiple?: boolean; height: number; parsing?: string; disabled?: boolean;
+export function Dropzone({ icon, title, hint, accept, multiple, height, parsing, disabled, slot }: {
+  icon: ReactNode; title: string; hint: string; accept: string; multiple?: boolean; height: number; parsing?: string; disabled?: boolean; slot?: 'backing';
 }) {
   const t = useT();
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop: (files) => void addFiles(files),
+    onDrop: (files) => void addFiles(files, slot),
     multiple, disabled: disabled || !!parsing, noDragEventsBubbling: true,
     // react-dropzone's accept map needs MIME types; .pth/.index have none, so the picker filter goes on the input directly.
   });
@@ -42,11 +42,11 @@ export function Dropzone({ icon, title, hint, accept, multiple, height, parsing,
 }
 
 /** Invisible picker used by "바꾸기" / ".index 넣기" buttons. */
-export function pickFiles(accept: string, multiple = false) {
+export function pickFiles(accept: string, multiple = false, slot?: 'backing') {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = accept;
   input.multiple = multiple;
-  input.onchange = () => input.files && void addFiles([...input.files]);
+  input.onchange = () => input.files && void addFiles([...input.files], slot);
   input.click();
 }

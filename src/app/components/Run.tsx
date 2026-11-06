@@ -20,7 +20,7 @@ import { useT } from '../i18n';
 
 export function ActionBar() {
   const t = useT();
-  const { song, model, index, opts, env, engineReady, envError } = useApp(useShallow((s) => ({ song: s.song, model: s.model, index: s.index, opts: s.opts, env: s.env, engineReady: s.engineReady, envError: s.envError })));
+  const { song, backing, model, index, opts, env, engineReady, envError } = useApp(useShallow((s) => ({ song: s.song, backing: s.backing, model: s.model, index: s.index, opts: s.opts, env: s.env, engineReady: s.engineReady, envError: s.envError })));
   // QA B1: only what the bar shows, so byte-level progress events do not re-render it.
   const dl = useApp(useShallow((s) => s.dl && { status: s.dl.status, open: s.dl.open, pct: Math.floor((s.dl.done / Math.max(1, s.dl.total)) * 100) }));
   const seconds = useApp(selSeconds);
@@ -28,17 +28,20 @@ export function ActionBar() {
   const voice = opts.mode === 'voice';
   const cta = voice ? t('cta.voice') : t('cta.song');
   let reason: ReactNode | undefined, sub: ReactNode | undefined, title: ReactNode;
-  const fileError = song?.status === 'error' || model?.status === 'error';
+  const stems = opts.mode === 'stems';
+  const songOk = song?.status === 'ready' && (!stems || backing?.status === 'ready');
+  const fileError = song?.status === 'error' || model?.status === 'error' || (stems && backing?.status === 'error');
   if (fileError) {
     title = t('bar.fixFiles'); reason = title;
     sub = song?.status === 'error' && model?.status === 'error' ? t('bar.fixFilesSub') : model?.status === 'error' ? t('bar.fixModel') : t('bar.fixSong');
   }
-  else if (song?.status !== 'ready' || model?.status !== 'ready') {
-    title = song?.status === 'parsing' || model?.status === 'parsing' || index?.status === 'parsing' ? t('bar.parsing') : t('bar.empty');
+  else if (!songOk || model?.status !== 'ready') {
+    title = song?.status === 'parsing' || backing?.status === 'parsing' || model?.status === 'parsing' || index?.status === 'parsing' ? t('bar.parsing') : stems ? t('bar.emptyStems') : t('bar.empty');
     reason = title;
     sub = (
       <span className="flex gap-3">
-        {[[song?.status === 'ready', t('card.song')], [model?.status === 'ready', t('card.model')]].map(([ok, label]) => (
+        {(stems ? [[song?.status === 'ready', t('stems.vocal')], [backing?.status === 'ready', t('stems.backing')], [model?.status === 'ready', t('card.model')]] as const
+          : [[song?.status === 'ready', t('card.song')], [model?.status === 'ready', t('card.model')]] as const).map(([ok, label]) => (
           <span key={String(label)} className={cn('inline-flex items-center gap-1', ok && 'text-success')}>
             {ok ? <CircleCheck className="size-3.5" /> : <Circle className="size-3.5" />}{label}
           </span>
@@ -47,15 +50,15 @@ export function ActionBar() {
     );
   } else if (model.info?.srUnknown) { title = t('bar.needSr'); reason = title; }
   else if (envError) { title = t('banner.initTitle'); reason = title; }
-  else if (!engineReady) { title = t('bar.preparing'); reason = title; }
+  else if (!engineReady || !song?.inputId) { title = t('bar.preparing'); reason = title; }
   else {
-    const stages: RunStage[] = voice ? ['f0', 'features', 'convert'] : ['separate', 'f0', 'features', 'convert'];
+    const stages: RunStage[] = opts.mode === 'song' ? ['separate', 'f0', 'features', 'convert'] : ['f0', 'features', 'convert'];
     const eta = fmtEta(t, estimateRun(seconds, env?.backend ?? 'webgpu', stages));
-    title = <>{voice ? t('bar.voiceFlow') : t('bar.songFlow')} {!opts.range && <span className="text-small font-normal text-muted-foreground tnum">· {t('bar.eta', { eta })}</span>}</>;
+    title = <>{t(voice ? 'bar.voiceFlow' : stems ? 'bar.stemsFlow' : 'bar.songFlow')} {!opts.range && <span className="text-small font-normal text-muted-foreground tnum">· {t('bar.eta', { eta })}</span>}</>;
     const clip = opts.range && <b className="font-semibold text-foreground tnum">{t('bar.clip', { n: Math.round(opts.range.end - opts.range.start) })} · {t('bar.eta', { eta })}</b>;
     const rest = need > 0
       ? <span className="inline-flex items-center gap-1.5"><DownloadIcon className="size-3.5" />{voice ? t('bar.skipSep') + ' ' : ''}{t('bar.firstDl', { size: fmtBytes(need) })}</span>
-      : voice ? t('bar.skipSep') : t('bar.cached');
+      : voice ? t('bar.skipSep') : stems ? t('bar.skipSepStems') : t('bar.cached');
     sub = clip ? <span className="inline-flex items-center gap-2 flex-wrap">{clip}<span aria-hidden>·</span>{rest}</span> : rest;
   }
   const loadingDl = dl?.status === 'loading' && !dl.open;
@@ -74,7 +77,7 @@ export function ActionBar() {
         {loadingDl
           ? <Button variant="secondary" onClick={() => showDownload(true)}>{t('dl.show')}</Button>
           : <div className="flex flex-col items-center gap-1">
-            <span className="text-caption text-muted-foreground">{voice ? t('bar.modeVoice') : t('bar.modeSong')}</span>
+            <span className="text-caption text-muted-foreground">{t(voice ? 'bar.modeVoice' : opts.mode === 'stems' ? 'bar.modeStems' : 'bar.modeSong')}</span>
             <Button size="cta" disabled={!!reason || !!dl}
               aria-describedby={reason ? 'bar-why' : undefined} onClick={() => void start()}>{cta}</Button>
           </div>}

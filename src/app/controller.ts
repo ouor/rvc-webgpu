@@ -45,7 +45,7 @@ addEventListener('pagehide', () => setRunningFlag(false));
 export const dismiss = (id: string) => set({ dismissed: [...get().dismissed, id] });
 
 // Stale async results: each call takes a ticket; only the newest ticket per slot may write back.
-const tickets: Record<'song' | 'model' | 'index' | 'plan' | 'lists', number> = { song: 0, model: 0, index: 0, plan: 0, lists: 0 };
+const tickets: Record<'song' | 'backing' | 'input' | 'model' | 'index' | 'plan' | 'lists', number> = { song: 0, backing: 0, input: 0, model: 0, index: 0, plan: 0, lists: 0 };
 const latest = (slot: keyof typeof tickets) => { const my = ++tickets[slot]; return () => tickets[slot] === my; };
 
 // ---------- UI state ----------
@@ -110,14 +110,19 @@ export async function refreshLists() {
 // ---------- files ----------
 
 /** Routes dropped/picked files by extension (DESIGN Dropzone: whole-page drop allowed). */
-export async function addFiles(files: File[]) {
+export async function addFiles(files: File[], slot?: 'backing') {
   const songs = files.filter((f) => AUDIO_EXT.includes(extOf(f.name)) || (f.type.startsWith('audio/') && !MODEL_EXT.includes(extOf(f.name))));
   const models = files.filter((f) => MODEL_EXT.includes(extOf(f.name)));
   const indexes = files.filter((f) => INDEX_EXT.includes(extOf(f.name)));
   for (const f of files) if (!songs.includes(f) && !models.includes(f) && !indexes.includes(f)) toast(t('toast.badExt', { ext: extOf(f.name) || f.name }));
   if (!songs.length && !models.length && !indexes.length) return;
   if (!(await guardReplace())) return;
-  if (songs[0]) void setSong(songs[0]);
+  if (slot === 'backing' && songs[0]) void setBacking(songs[0]);
+  else if (get().opts.mode === 'stems' && songs.length > 1) {
+    // Two files dropped at once: the one named like a backing track goes to the backing slot.
+    const i = Math.max(0, songs.findIndex((f) => BACKING_NAME.test(f.name)));
+    void setBacking(songs[i]); void setSong(songs[1 - i]);
+  } else if (songs[0]) void setSong(songs[0]);
   if (models[0]) await setModel(models[0], !indexes[0]);
   if (indexes[0]) {
     await setIndex(indexes[0]);
@@ -147,7 +152,7 @@ async function keepUnsaved(r: Result | undefined, aLabel?: string) {
     ? { title: t('confirm.unsavedTitle'), body: t('confirm.unsavedA', { d: aLabel }), action: t('confirm.unsavedSaveA'), alt: t('confirm.unsavedGo') }
     : { title: t('confirm.unsavedTitle'), body: t('confirm.unsavedBody'), action: t('confirm.unsavedSave'), alt: t('confirm.unsavedGo') });
   if (!v) return false;
-  if (v === true) await exportStem(r!.mode === 'song' ? 'mix' : 'converted', r);
+  if (v === true) await exportStem(r!.mode === 'voice' ? 'converted' : 'mix', r);
   return true;
 }
 
@@ -163,11 +168,10 @@ export async function setSong(file: File) {
   try {
     const dec = await decodeFile(file);
     const pk = peaks(dec.audio.l, 1200);
-    const inputId = await engine.setInput(dec.audio, { name: file.name, size: file.size, lastModified: file.lastModified });
     if (!current()) return; // replaced meanwhile
-    set({ song: { status: 'ready', name: file.name, size: file.size, duration: dec.duration, channels: dec.originalChannels, peaks: pk, buffer: dec.buffer, inputId } });
+    set({ song: { status: 'ready', name: file.name, size: file.size, lastModified: file.lastModified, duration: dec.duration, channels: dec.originalChannels, peaks: pk, buffer: dec.buffer } });
     void readSourceRate(file, current);
-    void refreshPlan();
+    await registerInput();
   } catch (e) {
     if (current()) set({ song: { status: 'error', name: file.name, size: file.size, error: toAppError(e, 'AUDIO_DECODE') } });
   }
@@ -184,7 +188,44 @@ async function readSourceRate(file: File, current: () => boolean) {
   } catch { /* metadata is optional */ }
 }
 
-export const clearSong = () => { latest('song'); set({ song: undefined, plan: undefined, result: undefined, prev: undefined, stems: undefined, view: 'work' }); };
+export const clearSong = () => { latest('song'); latest('input'); set({ song: undefined, plan: undefined, result: undefined, prev: undefined, stems: undefined, view: 'work' }); };
+
+/** I-20: the backing file in stems mode. */
+export async function setBacking(file: File) {
+  const current = latest('backing');
+  set({ backing: { status: 'parsing', name: file.name, size: file.size } });
+  try {
+    const dec = await decodeFile(file);
+    if (!current()) return;
+    set({ backing: { status: 'ready', name: file.name, size: file.size, lastModified: file.lastModified, duration: dec.duration, channels: dec.originalChannels, buffer: dec.buffer } });
+    await registerInput();
+  } catch (e) {
+    if (current()) set({ backing: { status: 'error', name: file.name, size: file.size, error: toAppError(e, 'AUDIO_DECODE') } });
+  }
+}
+
+export const clearBacking = () => { latest('backing'); set({ backing: undefined }); void registerInput(); };
+
+const BACKING_NAME = /inst|backing|karaoke|accomp|mr\b|반주/i;
+const stereoOf = (b: AudioBuffer) => ({ sr: b.sampleRate, l: b.getChannelData(0).slice(), r: b.getChannelData(b.numberOfChannels > 1 ? 1 : 0).slice() });
+
+/** Hands the decoded input to the engine for the current mode: one file (song / voice) or vocal + backing (stems). */
+async function registerInput() {
+  const current = latest('input');
+  const { song, backing, opts } = get();
+  if (song?.status !== 'ready' || !song.buffer) return;
+  set({ song: { ...song, inputId: undefined } });
+  const meta = { name: song.name, size: song.size, lastModified: song.lastModified ?? 0 };
+  try {
+    const inputId = opts.mode !== 'stems' ? await engine.setInput(stereoOf(song.buffer), meta)
+      : backing?.status === 'ready' && backing.buffer ? await engine.setStemsInput(stereoOf(song.buffer), stereoOf(backing.buffer), meta) : undefined;
+    const now = get().song;
+    if (current() && now) set({ song: { ...now, inputId } });
+    void refreshPlan();
+  } catch (e) {
+    if (current()) set({ song: { ...song, status: 'error', error: toAppError(e, 'AUDIO_DECODE') } });
+  }
+}
 
 /** A model brings its own index (zip / saved model) or none; a bundled index never outlives its model, a user-added one stays. */
 function applyModelIndex(info: RvcModelInfo, fileName: string) {
@@ -281,9 +322,12 @@ export async function removeMine(id: string, name: string) {
 // ---------- options / plan ----------
 
 export function setOpts(patch: Partial<Options>) {
-  const modeChanged = patch.mode && patch.mode !== get().opts.mode;
+  const from = get().opts.mode;
   set({ opts: { ...get().opts, ...patch } });
-  if (modeChanged) void refreshPlan();
+  if (!patch.mode || patch.mode === from) return;
+  // In and out of stems mode the engine input changes shape; the backing file only belongs to stems mode.
+  if (patch.mode === 'stems' || from === 'stems') { if (from === 'stems') set({ backing: undefined }); void registerInput(); }
+  else void refreshPlan();
 }
 
 /** All options back to the defaults (mode stays; the rerun panel keeps the range, which belongs to the separation). */
@@ -378,7 +422,8 @@ export const closeDownload = () => set({ dl: undefined });
 
 function emptySteps(mode: Options['mode']): Record<Step, StepInfo> {
   const s = Object.fromEntries(STEPS.map((k) => [k, { state: 'wait', done: 0, total: 0 }])) as Record<Step, StepInfo>;
-  if (mode === 'voice') { s.separate.state = 'skipped'; s.mix.state = 'skipped'; }
+  if (mode !== 'song') s.separate.state = 'skipped';
+  if (mode === 'voice') s.mix.state = 'skipped';
   return s;
 }
 
@@ -415,7 +460,8 @@ async function run(rerun: boolean, profile: 'normal' | 'low') {
     if (!get().job) return; // late event after cancel
     finishOthers(k);
     const cur = get().job!.steps[k];
-    if (p.reused) patchStep(k, { state: 'reused' });
+    if (p.skipped) patchStep(k, { state: 'skipped' });
+    else if (p.reused) patchStep(k, { state: 'reused' });
     else if (p.phase === 'load') patchStep(k, { state: 'load', startedAt: cur.startedAt ?? now() });
     else {
       const done = p.total > 0 && p.done >= p.total;
@@ -433,7 +479,7 @@ async function run(rerun: boolean, profile: 'normal' | 'low') {
   try {
     const r = await engine.run(job, onProgress);
     finishOthers('mix');
-    if (job.mode === 'song') patchStep('mix', { state: 'done', ms: 0 });
+    if (job.mode !== 'voice') patchStep('mix', { state: 'done', ms: 0 });
     const prevResult = rerun ? get().result : undefined;
     const result: Result = {
       songName: stripExt(s.song.name), modelName: s.model.info.name, mode: job.mode, opts: snapshot, hasIndex: !!job.indexId,

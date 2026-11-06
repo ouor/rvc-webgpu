@@ -57,7 +57,7 @@ export function OptionsFields({ rerun }: { rerun?: boolean }) {
   const hasIndex = useApp((s) => s.index?.status === 'ready');
   const advancedOpen = useApp((s) => s.settings.advancedOpen);
   const advChanged = useAdvChanged(rerun);
-  const song = opts.mode === 'song';
+  const song = opts.mode !== 'voice'; // the backing track stays in song and stems mode
   const nof0 = info && !info.f0;
   const keyWarn = song && opts.key % 12 !== 0 && !nof0;
   const maxSid = Math.max(0, (info?.nSpk ?? 1) - 1);
@@ -85,7 +85,7 @@ export function OptionsFields({ rerun }: { rerun?: boolean }) {
             <div className="px-4 pb-4 space-y-5">
               {hasIndex && <SliderField label={t('opt.indexRate')} help={t('opt.indexHelp')} value={opts.indexRate} onChange={(indexRate) => setOpts({ indexRate })}
                 min={0} max={1} step={0.05} defaultValue={DEFAULT_OPTIONS.indexRate} />}
-              {song && <SliderField label={t('opt.agg')} help={t('opt.aggHelp')} value={opts.aggressiveness} onChange={(aggressiveness) => setOpts({ aggressiveness })}
+              {opts.mode === 'song' && <SliderField label={t('opt.agg')} help={t('opt.aggHelp')} value={opts.aggressiveness} onChange={(aggressiveness) => setOpts({ aggressiveness })}
                 min={0} max={20} step={1} defaultValue={DEFAULT_OPTIONS.aggressiveness} note={rerun ? t('opt.aggRerun') : undefined} />}
               {!nof0 && <SliderField label={t('opt.protect')} help={t('opt.protectHelp')} value={opts.protect} onChange={(protect) => setOpts({ protect })}
                 min={0} max={0.5} step={0.01} defaultValue={DEFAULT_OPTIONS.protect} note={t('opt.protectNote')} />}
