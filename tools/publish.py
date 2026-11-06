@@ -4,7 +4,7 @@ Usage:
   python tools/publish.py                         # writes weights/dist/registry.json (revision "local")
   python tools/publish.py --upload <user>/web-rvc-models [--public]
       1) uploads every model file, 2) writes registry.json with that commit as revision, 3) uploads it.
-      Prints the VITE_MODEL_BASE_URL to use. Needs `huggingface-cli login` (or HF_TOKEN) beforehand.
+      Prints the VITE_MODEL_BASE_URL to use. Needs `hf auth login` (or HF_TOKEN) beforehand.
   --app-registry   also copy registry.json to src/models/registry.gen.json (the app build input)
 """
 import argparse
