@@ -176,11 +176,10 @@ describe('fixtures: ONNX (WASM)', () => {
     try {
       const out = await synthesizeAll(cache, net, { ...DEFAULT_CONVERT }, ctx(fixedNoise(f.inputs.rnd as Float32Array, f.inputs.noise as Float32Array, 400)), { id: 'k', index });
       expect(out.data.length).toBe(f.outputs.converted.length);
-      // Waveform SNR is meaningless here: ORT (CPU and WASM alike) and torch diverge in the NSF sine source on long
-      // voiced chunks (ARCHITECTURE R13), so judge by AC-2: log-f0 of the output vs the input (+t_pad frame offset).
-      // Measured: ours 0.942, torch reference 0.995. Floor below AC-2 (0.95) until the template issue is fixed (escalated).
+      expect(snrDb(out.data, f.outputs.converted as Float32Array)).toBeGreaterThan(30); // measured 37 dB with the float64 phase
+      // AC-2: log-f0 of the output vs the input (+t_pad frame offset). The sine phase now comes from JS float64 (sinePhase).
       const fo = await extractF0(resample(out.data, 40000, 16000), rm, ctx());
-      expect(logF0Corr(fo, cache.f0Hz, 100)).toBeGreaterThan(0.93);
+      expect(logF0Corr(fo, cache.f0Hz, 100)).toBeGreaterThan(0.95); // measured 0.996
     } finally { await net.release(); }
     } finally { await releaseSession(rm); }
   });

@@ -20,3 +20,6 @@ dev-dist/
 test-results/
 playwright-report/
 .env.local
+
+# core dev A fixtures (make_fixtures.py, 74MB)
+tests/fixtures/

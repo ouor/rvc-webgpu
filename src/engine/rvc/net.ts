@@ -17,6 +17,17 @@ export interface RvcNet {
   release(): Promise<void>;
 }
 
+/** NSF sine phase in float64 (§17.3, A's sine_phase): frac of the running sum of f0/sr, restarting at 0 per chunk. */
+export function sinePhase(pitchf: Float32Array, upp: number, sr: number): Float32Array {
+  const out = new Float32Array(pitchf.length * upp);
+  let acc = 0;
+  for (let t = 0; t < pitchf.length; t++) {
+    const r = (pitchf[t] / sr) % 1;
+    for (let k = 0; k < upp; k++) { acc = (acc + r) % 1; out[t * upp + k] = acc; }
+  }
+  return out;
+}
+
 const upsampleOf = (sr: number) => (sr === 32000 ? 320 : sr === 48000 ? 480 : 400);
 
 /** Template session + the user's .pth weights; g = emb_g[sid] is gathered here (§0). */
@@ -30,6 +41,8 @@ export async function createTemplateNet(
   toFloat32(emb.dtype, await ckpt.pth.read(emb), embAll);
   const gin = emb.shape[1];
   const upp = Number(template.manifest.meta.upp ?? upsampleOf(info.sr));
+  const tplSr = Number(template.manifest.meta.sr ?? info.sr);
+  const hasPhase = template.manifest.inputs.some((x) => x.name === 'phase');
   return {
     info, backend: used,
     async run(i, rng) {
@@ -45,6 +58,7 @@ export async function createTemplateNet(
         feeds.pitch = new ort.Tensor('int64', i.pitch!, [1, T]);
         feeds.pitchf = new ort.Tensor('float32', i.pitchf!, [1, T]);
         feeds.noise = new ort.Tensor('float32', rng.gaussian(T * upp), [1, T * upp, 1]);
+        if (hasPhase) feeds.phase = new ort.Tensor('float32', sinePhase(i.pitchf!, upp, tplSr), [1, T * upp, 1]);
       }
       return (await runSession(session, feeds)).audio.data as Float32Array;
     },
