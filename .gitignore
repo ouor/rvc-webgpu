@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.pth
+*.pt
+*.onnx
+*.index
+*.wav
+*.mp3
+*.flac
+weights/
+
+# reference repos and dev-time docs stay local
+external/
+docs/dev/
