@@ -41,7 +41,6 @@ export function AppHeader() {
           <span className="grid place-items-center size-7 rounded-lg bg-primary text-primary-foreground"><AudioWaveform className="size-4" /></span>
           Web RVC
         </div>
-        <span className="hidden xl:inline text-caption text-muted-foreground">{t('header.tagline')}</span>
         <span className="flex-1" />
         <button type="button" onClick={() => openSettings('privacy')} title={t('privacy.chipTitle')}
           className="hidden md:inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-small text-muted-foreground hover:bg-muted">
