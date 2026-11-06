@@ -5,6 +5,7 @@ import type { Stages } from '../src/engine/run';
 import { throttleProgress } from '../src/engine/ctx';
 import { changeRms } from '../src/dsp/rms';
 import { MemoryStore, sha256Hex } from '../src/models/store';
+import { ModelRepo } from '../src/models/registry';
 import { AppError } from '../src/shared/errors';
 import { DEFAULT_CONVERT, DEFAULT_SEPARATE, type JobSpec, type Stereo } from '../src/shared/types';
 import type { Progress } from '../src/shared/types';
@@ -71,6 +72,17 @@ describe('engine (no models)', () => {
     expect(await engine.cache.verify('rmvpe')).toBe('verified');
   });
 
+  it('a verified public file is not re-hashed on load; unmarked (old) caches are hashed once (QA B6)', async () => {
+    const store = new MemoryStore(), w = enc('w'.repeat(1000));
+    const reg = { revision: 'r1', files: { 'a.pth': { bytes: 1000, sha256: await sha256Hex(w.slice().buffer) } } };
+    const repo = new ModelRepo(reg as never, store, 'http://x/', (async () => new Response(w.slice())) as typeof fetch);
+    await repo.download('a.pth', {});
+    await store.write('public/r1/a.pth', [enc('v'.repeat(1000))]); // same size, wrong bytes
+    expect(await (await repo.blob('a.pth')).text()).toBe('v'.repeat(1000)); // trusted: size + marker only
+    await store.remove('public/r1/a.pth' + ModelRepo.MARK); // a cache from before the marker
+    await expect(repo.blob('a.pth')).rejects.toMatchObject({ code: 'CACHE_INTEGRITY' });
+  });
+
   it('my-models: list by last use, rename, verify', async () => {
     const { engine, store } = await setup();
     const model = enc('pth-bytes');
@@ -82,6 +94,10 @@ describe('engine (no models)', () => {
     expect((await engine.myModels.list()).map((m) => m.id)).toEqual([id, OLD]);
     await engine.myModels.rename(id, '  Kyubey  ');
     expect((await engine.myModels.list())[0].name).toBe('Kyubey');
+    expect((await engine.myModels.list())[1].memo).toBe(''); // old entries have none (I-10)
+    expect(await engine.myModels.setMemo(id, '  breathy, key +2 works best  ')).toBe('breathy, key +2 works best');
+    await engine.myModels.rename(id, 'Kyubey 2');
+    expect((await engine.myModels.list())[0]).toMatchObject({ name: 'Kyubey 2', memo: 'breathy, key +2 works best' });
     expect(await engine.cache.verify(id)).toBe('verified');
     expect(await engine.cache.verify(OLD)).toBe('incomplete');
     await expect(engine.myModels.rename('missing', 'x')).rejects.toMatchObject({ code: 'NOT_FOUND' });

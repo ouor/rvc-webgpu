@@ -133,8 +133,10 @@ async function input(): Promise<Stereo> {
   // ref: python decode (same samples as the reference); refvocals: the reference's separated vocals, so mode=voice
   // feeds the conversion exactly the reference vocal16k and the converted waveform is comparable.
   const x = await fetchF32(`/__dev/reference/bunnygirl-separate/${src === 'refvocals' ? 'vocals44k' : 'input44k'}.bin`);
-  const n = x.length / 2;
-  return { sr: 44100, l: x.slice(0, n), r: x.slice(n) };
+  const n = x.length / 2, k = Number(q.get('loop') ?? 1); // loop=3: a ~11 min input (QA B6)
+  const l = new Float32Array(n * k), r = new Float32Array(n * k);
+  for (let i = 0; i < k; i++) { l.set(x.subarray(0, n), i * n); r.set(x.subarray(n), i * n); }
+  return { sr: 44100, l, r };
 }
 
 async function run() {
@@ -155,14 +157,40 @@ async function run() {
     await engine.download(missing.map((d) => d.id), (p) => { if (p.done === p.total) log(`  ${p.file ?? p.stage} ${p.phase ?? ''} done`); });
   }
   let last = '';
+  // QA B6: tab memory (main + workers, needs crossOriginIsolated), sampled while running; max per stage
+  const mem = performance as Performance & { measureUserAgentSpecificMemory?: () => Promise<{ bytes: number }> };
+  const memMax: Record<string, number> = {};
+  let stageNow = 'setup', memOn = !!mem.measureUserAgentSpecificMemory;
+  const sample = async () => {
+    while (memOn) {
+      const b = (await mem.measureUserAgentSpecificMemory!().catch(() => ({ bytes: 0 }))).bytes;
+      memMax[stageNow] = Math.max(memMax[stageNow] ?? 0, b);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  };
+  void sample();
+  // QA B5: cancelAt=N cancels at separation patch N and times how long run() takes to reject
+  const cancelAt = Number(q.get('cancelAt') ?? 0);
+  let cancelT = 0;
   const r = await engine.run(job, (p) => {
+    stageNow = p.stage;
     const k = `${p.stage}/${p.phase ?? 'run'}/${p.backend ?? ''}${p.reused ? ' (reused)' : ''}`;
     if (k !== last) { log(`stage ${k} ${p.done}/${p.total}  +${((performance.now() - t0) / 1000).toFixed(1)}s`); last = k; }
+    else if (p.stage === 'separate' && p.done === 1) log(`  first patch +${((performance.now() - t0) / 1000).toFixed(1)}s`);
+    if (cancelAt && !cancelT && p.stage === 'separate' && p.phase === 'run' && p.done >= cancelAt) { cancelT = performance.now(); void engine.cancel(); }
+    const cancelMs = Number(q.get('cancelMs') ?? 0); // cancel this long after separation starts (pass 1 = analysis)
+    if (cancelMs && !cancelT && p.stage === 'separate' && p.phase === 'run') { cancelT = -1; setTimeout(() => { cancelT = performance.now(); void engine.cancel(); }, cancelMs); }
+  }).catch((e) => {
+    memOn = false;
+    if (cancelT > 0) log(`cancel -> rejected (${e?.code}) after ${((performance.now() - cancelT) / 1000).toFixed(2)} s (QA B5 <= 5 s)`);
+    throw e;
   });
+  memOn = false;
+  if (Object.keys(memMax).length) log('tab memory max MB per stage ' + JSON.stringify(Object.fromEntries(Object.entries(memMax).map(([k, v]) => [k, Math.round(v / 2 ** 20)]))));
   state.timings = r.timings;
   log('timings ms ' + JSON.stringify(r.timings));
   log(`converted ${r.converted.data.length} samples @ ${r.converted.sr}`);
-  if (r.vocals && src === 'ref' && !range) {
+  if (q.get('metrics') !== '0' && r.vocals && src === 'ref' && !range) {
     const voc = await fetchF32('/__dev/reference/bunnygirl-separate/vocals44k.bin');
     const m = voc.length / 2;
     state.metrics.vocalsSnrL = snrDb(r.vocals.l.subarray(0, m), voc.subarray(0, m));
@@ -172,7 +200,7 @@ async function run() {
     for (let a = 0; a + 441000 <= m; a += 441000) per.push(snrDb(r.vocals.l.subarray(a, a + 441000), voc.subarray(a, a + 441000)).toFixed(0));
     log('  per 10 s: ' + per.join(' '));
   }
-  if (src.startsWith('ref') && !range && model === 'kyubey') {
+  if (q.get('metrics') !== '0' && src.startsWith('ref') && !range && model === 'kyubey') {
     const ref = await fetchF32('/__dev/reference/bunnygirl-rvc-kyubey/convertedIr75.bin');
     const m = Math.min(ref.length, r.converted.data.length);
     // Waveforms differ (our PRNG vs the reference's numpy rnd/noise), so judge AC-2: RMVPE log-f0 of the output vs

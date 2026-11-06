@@ -32,18 +32,23 @@ interface CSpec { rows: number; frames: number; re: Float32Array[]; im: Float32A
 interface Analysis { X: CSpec; highEnd: CSpec; highEndH: number }
 
 /** AudioPre band loop + combine_spectrograms for one stereo segment. */
-function analyze(l: Float32Array, r: Float32Array, mp: VrBandParams): Analysis {
+/** `step` runs between the heavy parts (cancel point, QA B5: one 60 s segment takes ~11 s). */
+async function analyze(l: Float32Array, r: Float32Array, mp: VrBandParams, step: () => Promise<void>): Promise<Analysis> {
   const n = Object.keys(mp.band).length;
   const waves: Record<number, [Float32Array, Float32Array]> = {};
   const specs: Record<number, [Spec, Spec]> = {};
   for (let d = n; d >= 1; d--) {
     const bp = mp.band[d];
+    await step();
     if (d === n) waves[d] = bp.sr === mp.sr ? [l, r] : [resample(l, mp.sr, bp.sr), resample(r, mp.sr, bp.sr)];
     else {
       const up = mp.band[d + 1].sr;
       waves[d] = up === bp.sr ? waves[d + 1] : [resample(waves[d + 1][0], up, bp.sr), resample(waves[d + 1][1], up, bp.sr)];
     }
-    specs[d] = [stft(waves[d][0], bp.n_fft, bp.hl), stft(waves[d][1], bp.n_fft, bp.hl)];
+    await step();
+    const sl = stft(waves[d][0], bp.n_fft, bp.hl);
+    await step();
+    specs[d] = [sl, stft(waves[d][1], bp.n_fft, bp.hl)];
   }
   const frames = Math.min(...Object.values(specs).map((s) => s[0].frames));
   const rows = mp.bins + 1;
@@ -248,22 +253,24 @@ export async function separateVR(
   const n = audio.l.length;
   const top = mp.band[Object.keys(mp.band).length];
   const segs = segments(n, audio.sr, top.hl * meta.roi);
+  const cancelPoint = async () => { await yieldToLoop(); ctx.throwIfCancelled(); };
+  const totalPatches = segs.reduce((a, [s, e]) => a + Math.ceil((Math.floor((e - s) / top.hl) + 1) / meta.roi), 0);
+  ctx.progress(0, totalPatches); // the model is loaded; pass 1 is processing, not loading
   // pass 1: global coef = max |X| over the whole song (utils.py inference uses the full spectrogram)
   let coef = 0;
   for (const [s, e] of segs) {
     ctx.throwIfCancelled();
-    coef = Math.max(coef, maxMag(analyze(audio.l.subarray(s, e), audio.r.subarray(s, e), mp).X));
+    coef = Math.max(coef, maxMag((await analyze(audio.l.subarray(s, e), audio.r.subarray(s, e), mp, cancelPoint)).X));
     await yieldToLoop();
   }
   if (coef === 0) coef = 1; // silent input
   const out = { vl: new Float32Array(n), vr: new Float32Array(n), il: new Float32Array(n), ir: new Float32Array(n) };
   const ov = OVERLAP_SEC * audio.sr;
-  const totalPatches = segs.reduce((a, [s, e]) => a + Math.ceil((Math.floor((e - s) / mp.band[Object.keys(mp.band).length].hl) + 1) / meta.roi), 0);
   let done = 0;
   for (let k = 0; k < segs.length; k++) {
     const [s, e] = segs[k];
     ctx.throwIfCancelled();
-    const A = analyze(audio.l.subarray(s, e), audio.r.subarray(s, e), mp);
+    const A = await analyze(audio.l.subarray(s, e), audio.r.subarray(s, e), mp, cancelPoint);
     const mask = await predictMask(A.X, coef, net, meta, ctx, () => ctx.progress(++done, Math.max(done, totalPatches)));
     applyAggressiveness(mask, A.X.rows, A.X.frames, opts.aggressiveness, mp.band[1].crop_stop);
     const { inst, voc } = stems(A.X, mask, meta.outputIs);

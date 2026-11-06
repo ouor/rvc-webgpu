@@ -32,6 +32,13 @@ export class ModelRepo {
   constructor(public reg: Registry, private store: BlobStore, private baseUrl: string, private f: typeof fetch = fetch) {}
 
   private local = (path: string) => `public/${this.reg.revision}/${path}`;
+  /** Marker holding the sha256 a file was verified against (download, import, verify). Loads trust it (B6). */
+  static readonly MARK = '.verified';
+  private mark = (path: string) => this.store.write(this.local(path) + ModelRepo.MARK, [new TextEncoder().encode(this.meta(path).sha256)]);
+  private async marked(path: string) {
+    const m = this.local(path) + ModelRepo.MARK;
+    return (await this.store.has(m)) && (await (await this.store.read(m)).text()) === this.meta(path).sha256;
+  }
 
   /** Registry paths needed for a public model or an RVC template id. */
   files(id: string): string[] {
@@ -52,7 +59,8 @@ export class ModelRepo {
     let status: 'verified' | 'incomplete' | 'corrupt' = 'verified';
     for (const p of this.files(id)) {
       if (!(await this.isCached(p))) { if (status === 'verified') status = 'incomplete'; continue; }
-      try { await readVerified(this.store, this.local(p), this.meta(p).sha256); } catch { status = 'corrupt'; }
+      try { await readVerified(this.store, this.local(p), this.meta(p).sha256); await this.mark(p); }
+      catch { status = 'corrupt'; await this.store.remove(this.local(p) + ModelRepo.MARK); }
     }
     return status;
   }
@@ -68,6 +76,7 @@ export class ModelRepo {
     const path = hits[0], m = this.meta(path);
     if (file.size !== m.bytes || (await sha256Hex(file)) !== m.sha256) return { path, status: 'mismatch' };
     await this.store.write(this.local(path), blobChunks(file));
+    await this.mark(path);
     return { path, status: 'imported' };
   }
 
@@ -94,13 +103,21 @@ export class ModelRepo {
   }
 
   async download(path: string, o: { onBytes?: (n: number) => void; throwIfCancelled?: () => void }) {
+    await this.store.remove(this.local(path) + ModelRepo.MARK);
     await download(this.store, new URL(path, this.baseUrl).href, this.local(path), this.meta(path), { ...o, fetch: this.f });
+    await this.mark(path);
   }
 
-  /** Verified read of one cached registry file. Never downloads (AC-18): callers plan()/download() first. */
+  /**
+   * Read of one cached registry file. Never downloads (AC-18): callers plan()/download() first.
+   * QA B6: a file verified once (marker) is only size-checked; cache.verify() re-hashes in full.
+   */
   async blob(path: string): Promise<Blob> {
     if (!(await this.isCached(path))) throw new AppError('MODELS_MISSING', `${path} is not downloaded`, path, true);
-    return readVerified(this.store, this.local(path), this.meta(path).sha256);
+    if (await this.marked(path)) return this.store.read(this.local(path));
+    const b = await readVerified(this.store, this.local(path), this.meta(path).sha256); // caches from before the marker
+    await this.mark(path);
+    return b;
   }
 
   async open(id: string): Promise<Opened> {

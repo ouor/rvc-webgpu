@@ -270,7 +270,9 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       },
       async remove(id) { // public model id or my-model id, as cache.list() returns them
         const r = needRepo();
-        if (r.ids().includes(id)) { for (const f of r.files(id)) await store.remove(publicDir(r.reg.revision) + f); }
+        if (r.ids().includes(id)) {
+          for (const f of r.files(id)) for (const x of ['', ModelRepo.MARK]) await store.remove(publicDir(r.reg.revision) + f + x);
+        }
         else if (id === 'recent') await recent.clear();
         else await engine.myModels.remove(id);
       },
@@ -302,6 +304,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
         await mine.save({ info: m.info, file: m.file }, ix && { info: ix.info, file: ix.file });
       },
       list: () => mine.list(),
+      setMemo: (id, memo) => mine.setMemo(id, memo),
       async rename(id, name) {
         const n = await mine.rename(id, name);
         const loaded = lib.loaded(id);
