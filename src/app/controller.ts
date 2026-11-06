@@ -104,9 +104,9 @@ export async function setModel(file: File) {
     const info = await engine.loadRvcModel(file);
     if (get().model?.fileName !== file.name) return;
     set({ model: { status: 'ready', fileName: file.name, fromZip: extOf(file.name) === 'zip', info } });
-    if (info.indexId) set({ index: { status: 'ready', fileName: file.name, id: info.indexId } });
+    if (info.indexId) set({ index: { status: 'ready', fileName: file.name, id: info.indexId, info: info.index } });
     else if (get().index?.fileName === get().model?.fileName) set({ index: undefined });
-    if (get().opts.sid >= info.nSpk) setOpts({ sid: 0 });
+    setOpts({ sid: 0 }); // speaker ids are per model
     toast(t('toast.modelLoaded', { name: info.name, v: info.version, sr: `${info.sr / 1000}kHz` }) + (info.indexId ? ` · ${t('toast.zipIndex')}` : ''));
     void refreshPlan();
   } catch (e) {
@@ -119,7 +119,7 @@ export async function openMyModel(id: string) {
   set({ model: { status: 'parsing', fileName: id, fromMine: true }, settingsTab: undefined });
   try {
     const info = await engine.myModels.open(id);
-    set({ model: { status: 'ready', fileName: info.name, fromMine: true, info, saved: true }, index: info.indexId ? { status: 'ready', fileName: info.name, id: info.indexId } : undefined });
+    set({ model: { status: 'ready', fileName: info.name, fromMine: true, info, saved: true }, index: info.indexId ? { status: 'ready', fileName: info.name, id: info.indexId, info: info.index } : undefined, myModelsVersion: get().myModelsVersion + 1 });
     void refreshPlan();
   } catch (e) {
     set({ model: { status: 'error', fileName: id, error: toAppError(e) } });
@@ -234,11 +234,11 @@ export async function startDownload(retry = false) {
     if (job) items = (await engine.plan(job)).filter((d) => !d.cached);
   }
   const total = items.reduce((a, d) => a + d.bytes, 0);
-  set({ dl: { ...dl, status: 'loading', items, done: 0, total, startedAt: performance.now(), error: undefined } });
+  set({ dl: { ...dl, status: 'loading', items, done: 0, total, got: {}, cur: undefined, startedAt: performance.now(), error: undefined } });
   try {
     await engine.download(items.map((d) => d.id), (p: Progress) => {
       const cur = get().dl;
-      if (cur) set({ dl: { ...cur, done: p.done, total: p.total || total } });
+      if (cur) set({ dl: { ...cur, done: p.done, total: p.total || total, ...(p.item && { cur: p.item, got: { ...cur.got, [p.item]: p.itemDone ?? 0 } }) } });
     });
     set({ dl: undefined });
     void refreshPlan();
@@ -439,6 +439,42 @@ export async function clearCache() {
   await engine.cache.clear();
   void refreshPlan();
   return true;
+}
+
+/** Re-hashes one cache item now; 'corrupt' files are deleted by the engine. */
+export async function verifyCacheItem(id: string) {
+  try {
+    const st = await engine.cache.verify(id);
+    if (st === 'verified') toast.success(t('toast.verifyOk'));
+    else toast.error(t(st === 'corrupt' ? 'toast.verifyCorrupt' : 'toast.verifyIncomplete'));
+  } catch (e) {
+    toast.error(t('toast.verifyFailed'), { description: toAppError(e).message });
+  }
+  set({ myModelsVersion: get().myModelsVersion + 1 }); // refreshes cache lists
+  void refreshPlan();
+}
+
+/** PRD R10: fill the public cache from model files the user downloaded elsewhere. */
+export async function importCache(files: File[]) {
+  try {
+    const res = await engine.cache.importFiles(files);
+    const n = (k: string) => res.filter((r) => r.status === k).length;
+    const parts = [t('toast.importDone', { n: n('imported') })];
+    if (n('mismatch')) parts.push(t('toast.importMismatch', { n: n('mismatch') }));
+    if (n('unknown')) parts.push(t('toast.importUnknown', { n: n('unknown') }));
+    (n('imported') ? toast.success : toast.error)(parts.join(' · '));
+  } catch (e) {
+    toast.error(t('toast.importFailed'), { description: toAppError(e).message });
+  }
+  set({ myModelsVersion: get().myModelsVersion + 1 });
+  void refreshPlan();
+}
+
+export async function renameMine(id: string, name: string) {
+  await engine.myModels.rename(id, name);
+  const m = get().model;
+  if (m?.info?.id === id) set({ model: { ...m, info: { ...m.info, name } } });
+  set({ myModelsVersion: get().myModelsVersion + 1 });
 }
 
 export async function removeCacheItem(id: string) {

@@ -63,7 +63,7 @@ export interface IndexState {
   status: 'parsing' | 'ready' | 'error';
   fileName: string;
   id?: string; // set for a loaded index (also from a zip or a saved model)
-  info?: IndexInfo; // undefined when the index came inside a zip / my-model (engine returns only the id)
+  info?: IndexInfo;
   error?: AppError;
 }
 
@@ -90,6 +90,8 @@ export interface Download {
   items: DownloadItem[];
   done: number;
   total: number;
+  got?: Record<string, number>; // per DownloadItem bytes so far (only items that started)
+  cur?: string; // item being fetched
   startedAt?: number;
   error?: AppError;
 }

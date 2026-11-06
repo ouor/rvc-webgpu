@@ -8,7 +8,7 @@ import { Dropzone, pickFiles } from './Dropzone';
 import { HelpTip, Segmented, StepCard } from './Field';
 import { InlineError, NoticeButton } from './Notice';
 import { AudioPlayer, usePlayer } from './Player';
-import type { RvcModelInfo } from '@/shared/types';
+import type { SavedModel } from '@/shared/types';
 import { fmtBytes, fmtHz, fmtTime } from '../lib/format';
 import { cn } from '../lib/utils';
 import { clearIndex, clearModel, clearSong, engine, openMyModel, saveMine, setOnnxSr, setOpts } from '../controller';
@@ -90,7 +90,7 @@ export function SongCard() {
 function MyModelPicker() {
   const t = useT();
   const version = useApp((s) => s.myModelsVersion);
-  const [list, setList] = useState<RvcModelInfo[]>([]);
+  const [list, setList] = useState<SavedModel[]>([]);
   const [open, setOpen] = useState(false);
   const ready = useApp((s) => s.engineReady);
   useEffect(() => { if (ready) void engine.myModels.list().then(setList).catch(() => setList([])); }, [version, open, ready]);
@@ -175,7 +175,7 @@ function ModelInfoCard() {
         <span className={tag}>{info.version}</span>
         {!info.srUnknown && <span className={tag}>{fmtHz(info.sr)}</span>}
         <span className={cn(tag, !info.f0 && 'bg-warning-soft text-warning')}>{info.f0 ? t('model.f0') : t('model.nof0')}</span>
-        <span className={cn(tag, info.nSpk > 1 && 'bg-accent text-accent-foreground')}>{t('model.spk', { n: info.nSpk })}</span>
+        <span className={tag}>{t('model.spk', { n: info.nSpk })}</span>
         {info.meta?.vocoder && <span className={tag}>{info.meta.vocoder}</span>}
         {info.meta?.epoch !== undefined && <span className={tag}>{t('model.epoch', { n: info.meta.epoch })}</span>}
       </div>

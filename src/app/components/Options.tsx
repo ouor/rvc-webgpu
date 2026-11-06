@@ -49,19 +49,11 @@ export function OptionsFields({ rerun }: { rerun?: boolean }) {
   const song = opts.mode === 'song';
   const nof0 = info && !info.f0;
   const keyWarn = song && opts.key % 12 !== 0 && !nof0;
-  const advCount = 2 + (song ? 1 : 0) + (rerun ? 0 : 1);
+  const multiSpk = !!info && info.nSpk > 1;
+  const advCount = 2 + (multiSpk ? 1 : 0) + (song ? 1 : 0) + (rerun ? 0 : 1);
 
   return (
     <div className="space-y-5">
-      {info && info.nSpk > 1 && (
-        <div>
-          <label className="text-small font-semibold mb-2 block" id="sid-l">{t('opt.sid')}</label>
-          <Select value={String(opts.sid)} onValueChange={(v) => setOpts({ sid: Number(v) })}>
-            <SelectTrigger aria-labelledby="sid-l" className="w-full h-10 rounded-lg"><SelectValue /></SelectTrigger>
-            <SelectContent>{Array.from({ length: info.nSpk }, (_, i) => <SelectItem key={i} value={String(i)}>{t('opt.sidItem', { n: i })}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-      )}
       <SliderField
         label={t('opt.key')} help={t('opt.keyHelp')} value={opts.key} onChange={(key) => setOpts({ key })}
         min={-24} max={24} step={1} unit={t('opt.semitone')} defaultValue={0}
@@ -86,6 +78,16 @@ export function OptionsFields({ rerun }: { rerun?: boolean }) {
               <div>
                 <SectionLabel>{t('opt.secConvert')}</SectionLabel>
                 <div className="space-y-4">
+                  {multiSpk && (
+                    <div>
+                      <label className="text-small font-semibold mb-2 block" id="sid-l">{t('opt.sid')}</label>
+                      <Select value={String(opts.sid)} onValueChange={(v) => setOpts({ sid: Number(v) })}>
+                        <SelectTrigger aria-labelledby="sid-l" className="w-full h-10 rounded-lg"><SelectValue /></SelectTrigger>
+                        <SelectContent>{Array.from({ length: info.nSpk }, (_, i) => <SelectItem key={i} value={String(i)}>{t('opt.sidItem', { n: i })}</SelectItem>)}</SelectContent>
+                      </Select>
+                      <p className="text-caption text-muted-foreground mt-1.5">{t('opt.sidNote')}</p>
+                    </div>
+                  )}
                   <SliderField label={t('opt.protect')} help={t('opt.protectHelp')} value={opts.protect} onChange={(protect) => setOpts({ protect })}
                     min={0} max={0.5} step={0.01} defaultValue={DEFAULT_OPTIONS.protect} disabled={nof0} note={nof0 ? t('opt.nof0') : t('opt.protectNote')} />
                   <SliderField label={t('opt.rms')} help={t('opt.rmsHelp')} value={opts.rmsMixRate} onChange={(rmsMixRate) => setOpts({ rmsMixRate })}

@@ -124,13 +124,10 @@ export function DownloadDialog() {
   useEffect(() => { if (dl?.status !== 'loading') return; const id = setInterval(() => setNow(performance.now()), 1000); return () => clearInterval(id); }, [dl?.status]);
   if (!dl) return null;
   const close = (o: boolean) => { if (o) return; if (dl.status === 'loading') set({ dl: { ...dl, open: false } }); else set({ dl: undefined }); };
-  // Download order = item order, so per-item bytes come from the running total.
-  const starts = dl.items.map((_, i) => dl.items.slice(0, i).reduce((a, d) => a + d.bytes, 0));
-  const rows = dl.items.map((item, i) => {
-    const acc = starts[i];
-    const got = Math.max(0, Math.min(item.bytes, dl.done - acc));
-    const end = acc + item.bytes;
-    const state: 'wait' | 'run' | 'done' | 'confirm' = ['confirm', 'storage', 'offline'].includes(dl.status) ? 'confirm' : dl.done >= end ? 'done' : dl.status === 'loading' && dl.done >= acc ? 'run' : 'wait';
+  const rows = dl.items.map((item) => {
+    const got = dl.got?.[item.id] ?? 0;
+    const state: 'wait' | 'run' | 'done' | 'confirm' = ['confirm', 'storage', 'offline'].includes(dl.status) ? 'confirm'
+      : item.id === dl.cur ? (dl.status === 'loading' ? 'run' : 'wait') : dl.got?.[item.id] !== undefined ? 'done' : 'wait';
     return { item, got, state };
   });
   const firstFailed = dl.status === 'failed' ? rows.find((r) => r.state !== 'done') : undefined;

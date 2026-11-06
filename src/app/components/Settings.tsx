@@ -1,16 +1,16 @@
 // S5 settings dialog (vertical tabs) + global ConfirmDialog.
-import { useEffect, useState } from 'react';
-import { Clipboard, FolderHeart, FolderInput, HardDrive, Info, Lock, MicVocal, ShieldCheck, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, Clipboard, FolderHeart, FolderInput, HardDrive, Info, Loader2, Lock, MicVocal, Pencil, ShieldCheck, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { Dialog as D, Tabs } from 'radix-ui';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './ui/alert-dialog';
 import { Segmented, SwitchRow } from './Field';
 import { itemLabel, modelHost } from './Run';
-import type { BackendPref, CacheEntry, RvcModelInfo } from '@/shared/types';
+import type { BackendPref, CacheEntry, SavedModel } from '@/shared/types';
 import { fmtBytes, fmtHz } from '../lib/format';
 import { cn } from '../lib/utils';
-import { clearCache, engine, initEngine, openMyModel, removeCacheItem, removeMine } from '../controller';
+import { clearCache, engine, importCache, initEngine, openMyModel, removeCacheItem, removeMine, renameMine, verifyCacheItem } from '../controller';
 import { DEFAULT_BASE_URL, get, selBusy, set, useApp, type SettingsTab } from '../store';
 import { useT } from '../i18n';
 import pkg from '../../../package.json';
@@ -21,6 +21,29 @@ export function envInfo() {
 }
 
 const h3 = 'text-h3';
+const fmtDate = (ms: number) => new Date(ms).toLocaleDateString(get().settings.lang, { year: 'numeric', month: 'short', day: 'numeric' });
+
+function StatusChip({ status }: { status: CacheEntry['status'] | 'checking' }) {
+  const t = useT();
+  const tone = { verified: 'bg-success/15 text-success', incomplete: 'bg-warning-soft text-warning', corrupt: 'bg-destructive-soft text-destructive', checking: 'bg-muted text-muted-foreground' }[status];
+  return (
+    <span className={cn('inline-flex items-center gap-1 h-6 px-2 rounded-full text-caption font-semibold shrink-0', tone)}>
+      {status === 'checking' ? <Loader2 className="size-3 animate-spin" /> : status === 'verified' ? <Check className="size-3" /> : null}{t(`cache.${status}`)}
+    </span>
+  );
+}
+
+function RenameInput({ name, onDone }: { name: string; onDone: (name?: string) => void }) {
+  const t = useT();
+  const [v, setV] = useState(name);
+  const ended = useRef(false); // Escape then the unmount blur must not commit
+  const end = (n?: string) => { if (!ended.current) { ended.current = true; onDone(n); } };
+  return (
+    <input autoFocus value={v} maxLength={80} aria-label={t('mine.rename')} onChange={(e) => setV(e.target.value)} onFocus={(e) => e.target.select()}
+      onBlur={() => end(v.trim())} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.stopPropagation(); end(); } }}
+      className="w-full h-7 rounded-md border border-input bg-card px-2 text-small font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+  );
+}
 
 function General() {
   const t = useT();
@@ -93,6 +116,11 @@ function Storage() {
   const settings = useApp((s) => s.settings);
   const busy = useApp(selBusy);
   const [url, setUrl] = useState(settings.modelBaseUrl);
+  const [verifying, setVerifying] = useState<string>();
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const verify = async (id: string) => { setVerifying(id); await verifyCacheItem(id); setVerifying(undefined); reload(); };
+  const doImport = async (f: File[]) => { setImporting(true); await importCache(f); setImporting(false); reload(); };
   const pub = entries?.filter((e) => e.kind === 'public') ?? [];
   const pubBytes = pub.reduce((a, e) => a + e.bytes, 0);
   const mineBytes = (entries ?? []).filter((e) => e.kind === 'my-model').reduce((a, e) => a + e.bytes, 0);
@@ -124,15 +152,18 @@ function Storage() {
             {pub.map((e) => { const [name, sub] = itemLabel(t, e.id); return (
               <li key={e.id} className="flex items-center gap-3 py-2.5 text-small">
                 <span className="flex-1 min-w-0 truncate"><b>{name}</b> <span className="text-muted-foreground">{sub}</span></span>
+                <StatusChip status={verifying === e.id ? 'checking' : e.status} />
                 <span className="tnum text-muted-foreground">{fmtBytes(e.bytes)}</span>
+                <Button variant="ghost" className="h-8 px-2 rounded-lg text-small" disabled={busy || !!verifying} onClick={() => void verify(e.id)}>{t('cache.verify')}</Button>
                 <button type="button" disabled={busy} className="grid place-items-center size-8 rounded-lg hover:bg-muted text-muted-foreground hover:text-destructive disabled:opacity-40" aria-label={t('common.delete')} onClick={async () => { await removeCacheItem(e.id); reload(); }}><Trash2 className="size-4" /></button>
               </li>
             ); })}
           </ul>
         ) : <p className="text-small text-muted-foreground mt-2">{entries ? t('set.pubEmpty') : t('env.checking')}</p>}
         <p className="text-caption text-muted-foreground mt-2">{t('set.integrityNote')}</p>
-        <Button variant="secondary" className="mt-3 h-9 rounded-lg" disabled title={t('set.fillLocalPending')}><FolderInput />{t('set.fillLocal')}</Button>
-        <p className="text-caption text-muted-foreground mt-1">{t('set.fillLocalPending')}</p>
+        <input ref={fileRef} type="file" multiple hidden onChange={(ev) => { const f = [...(ev.target.files ?? [])]; ev.target.value = ''; if (f.length) void doImport(f); }} />
+        <Button variant="secondary" className="mt-3 h-9 rounded-lg" disabled={busy || importing} onClick={() => fileRef.current?.click()}>{importing ? <Loader2 className="animate-spin" /> : <FolderInput />}{t('set.fillLocal')}</Button>
+        <p className="text-caption text-muted-foreground mt-1">{t('set.fillLocalSub')}</p>
       </div>
       <div>
         <h3 className={h3}>{t('set.repo')}</h3>
@@ -155,7 +186,8 @@ function Models() {
   const ready = useApp((s) => s.engineReady);
   const busy = useApp(selBusy);
   const { entries } = useCache();
-  const [list, setList] = useState<RvcModelInfo[]>();
+  const [list, setList] = useState<SavedModel[]>();
+  const [editing, setEditing] = useState<string>();
   useEffect(() => { if (ready) void engine.myModels.list().then(setList).catch(() => setList([])); }, [version, ready]);
   return (
     <div>
@@ -167,8 +199,12 @@ function Models() {
             <li key={m.id} className="flex items-center gap-3 py-3">
               <span className="grid place-items-center size-9 rounded-lg bg-stem-vocal/15 text-stem-vocal shrink-0"><MicVocal className="size-4" /></span>
               <div className="flex-1 min-w-0">
-                <p className="text-small font-semibold truncate">{m.name}</p>
-                <p className="text-caption text-muted-foreground">{[m.source === 'onnx' && 'ONNX', m.version, fmtHz(m.sr), m.f0 ? t('model.f0') : t('model.nof0'), m.indexId ? 'index' : t('set.noIndex')].filter(Boolean).join(' · ')}</p>
+                {editing === m.id
+                  ? <RenameInput name={m.name} onDone={async (name) => { setEditing(undefined); if (name && name !== m.name) await renameMine(m.id, name); }} />
+                  : <p className="text-small font-semibold flex items-center gap-1 min-w-0"><span className="truncate">{m.name}</span>
+                      <button type="button" disabled={busy} className="grid place-items-center size-6 shrink-0 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" aria-label={t('mine.rename')} title={t('mine.rename')} onClick={() => setEditing(m.id)}><Pencil className="size-3.5" /></button>
+                    </p>}
+                <p className="text-caption text-muted-foreground">{[m.source === 'onnx' && 'ONNX', m.version, fmtHz(m.sr), m.f0 ? t('model.f0') : t('model.nof0'), m.indexId ? (m.index ? t('mine.indexN', { n: m.index.nVectors.toLocaleString() }) : 'index') : t('set.noIndex'), (m.lastUsed || m.savedAt) > 0 && t('mine.lastUsed', { d: fmtDate(m.lastUsed || m.savedAt) })].filter(Boolean).join(' · ')}</p>
               </div>
               <span className="text-caption text-muted-foreground tnum">{fmtBytes(entries?.find((e) => e.id === m.id)?.bytes ?? m.bytes)}</span>
               <Button variant="secondary" className="h-8 rounded-lg" disabled={busy} onClick={() => void openMyModel(m.id)}>{t('set.use')}</Button>
@@ -208,18 +244,30 @@ function Privacy() {
 
 function About() {
   const t = useT();
+  const env = useApp((s) => s.env);
   return (
     <div className="space-y-6">
       <h3 className={h3}>Web RVC</h3>
       <dl className="grid grid-cols-[140px_1fr] gap-y-2 text-small">
         <dt className="text-muted-foreground">{t('about.version')}</dt><dd className="tnum">{pkg.version}</dd>
         <dt className="text-muted-foreground">{t('about.modelRepo')}</dt><dd className="font-mono text-caption break-all">{useApp.getState().settings.modelBaseUrl}</dd>
+        {env && <><dt className="text-muted-foreground">{t('about.revision')}</dt><dd className="font-mono text-caption break-all">{env.modelRevision}</dd></>}
+        {env && <><dt className="text-muted-foreground">GPU</dt><dd className="text-caption break-all">{env.gpuAdapter ?? (env.webgpu ? '-' : t('set.unsupported'))}</dd></>}
       </dl>
       <div>
         <h3 className={h3}>{t('about.licenses')}</h3>
         <ul className="mt-2 text-small text-muted-foreground space-y-1">
           {['onnxruntime-web · MIT', 'React, Radix UI, shadcn/ui, lucide · MIT/ISC', 'wavesurfer.js · BSD-3-Clause', 'mediabunny · MPL-2.0', '@mediabunny/mp3-encoder (LAME) · LGPL-2.1', 'Pretendard · SIL OFL 1.1', 'RVC, UVR5 (models) · MIT', 'ContentVec / HuBERT, RMVPE · ' + t('about.modelLic')].map((x) => <li key={x}>{x}</li>)}
         </ul>
+      </div>
+      <div>
+        <h3 className={h3}>{t('about.lameTitle')}</h3>
+        <p className="text-small text-muted-foreground mt-1">{t('about.lame')}</p>
+        <p className="text-caption mt-1.5 flex flex-wrap gap-x-3">
+          <a className="text-primary underline-offset-2 hover:underline" href="https://lame.sourceforge.io/" target="_blank" rel="noreferrer">lame.sourceforge.io</a>
+          <a className="text-primary underline-offset-2 hover:underline" href="https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" target="_blank" rel="noreferrer">LGPL-2.1</a>
+          <a className="text-primary underline-offset-2 hover:underline" href="https://github.com/Vanilagy/mediabunny" target="_blank" rel="noreferrer">mediabunny</a>
+        </p>
       </div>
       <Button variant="secondary" className="h-9 rounded-lg" onClick={() => { void navigator.clipboard.writeText(envInfo()); toast(t('toast.copied')); }}><Clipboard />{t('about.copyEnv')}</Button>
       <p className="text-caption text-muted-foreground">{t('about.copyNote')}</p>

@@ -25,13 +25,7 @@ export function toggle(p: MixPlayer) {
   else { if (active && active !== p) active.pause(); active = p; p.play(); }
   notify();
 }
-/** MixPlayer has no paused seek; start+stop in the same task renders no audio (shortcut: ask core for seek()). */
-export function seek(p: MixPlayer, t: number) {
-  const playing = p.isPlaying;
-  p.play(Math.max(0, Math.min(t, p.duration)));
-  if (!playing) p.pause();
-  notify();
-}
+export function seek(p: MixPlayer, t: number) { p.seek(t); notify(); }
 const onEnd = (p: MixPlayer, f?: () => void) => { p.onEnded = f; };
 export const pauseAll = () => { active?.pause(); notify(); };
 
@@ -43,7 +37,7 @@ export function usePlayer(stems: Stems | undefined, mix?: MixParams) {
     if (!stems) return;
     const pos = player.position, playing = player.isPlaying;
     player.load(stems);
-    if (pos > 0) { player.play(pos); if (!playing) player.pause(); }
+    if (pos > 0) { if (playing) player.play(pos); else player.seek(pos); }
     notify();
   }, [player, stems]);
   useEffect(() => { if (mix) player.set(mix); }, [player, mix]);
@@ -110,6 +104,7 @@ export function Waveform({ peaks, duration, color, height, player, region, onReg
 
   // rAF cursor while playing (not React state per frame).
   const playing = player?.isPlaying;
+  const v = useSyncExternalStore(subscribe, () => version); // paused seeks change only the position
   useEffect(() => {
     if (!player) return;
     let raf = 0;
@@ -121,7 +116,7 @@ export function Waveform({ peaks, duration, color, height, player, region, onReg
     };
     tick();
     return () => cancelAnimationFrame(raf);
-  }, [player, playing, timeRef]);
+  }, [player, playing, timeRef, v]);
 
   const onKey = (e: React.KeyboardEvent) => {
     if (!player) return;
