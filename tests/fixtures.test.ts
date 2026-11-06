@@ -8,7 +8,7 @@ import { searchLabels, searchIndex } from '../src/engine/rvc/index-search';
 import { extractFeatures } from '../src/engine/rvc/features';
 import { prepareConvert, synthesizeAll } from '../src/engine/rvc/pipeline';
 import { createTemplateNet } from '../src/engine/rvc/net';
-import { separateVR, type VrBandParams, type VrMeta } from '../src/engine/separate/vr';
+import { segments, separateVR, type VrBandParams, type VrMeta } from '../src/engine/separate/vr';
 import { readFaissIndex } from '../src/formats/faiss';
 import { readPth } from '../src/formats/pth';
 import { readRvcCheckpoint } from '../src/formats/rvc-checkpoint';
@@ -65,6 +65,16 @@ function logF0Corr(a: ArrayLike<number>, b: ArrayLike<number>, off: number): num
 beforeAll(() => { ort.env.wasm.numThreads = 8; });
 
 describe('fixtures: pure JS', () => {
+  it('VR segments start on the patch grid and overlap by 4 s', () => {
+    const unit = 480 * 256, n = 217 * 44100;
+    const segs = segments(n, 44100, unit);
+    expect(segs[0][0]).toBe(0);
+    expect(segs.at(-1)![1]).toBe(n);
+    for (let k = 1; k < segs.length; k++) {
+      expect(segs[k][0] % unit).toBe(0);
+      expect(segs[k - 1][1] - segs[k][0]).toBe(4 * 44100);
+    }
+  });
   fx('rmvpe-decode')('rmvpe decode', () => {
     const f = loadFixture('rmvpe-decode');
     const h = f.inputs.hidden as Float32Array;

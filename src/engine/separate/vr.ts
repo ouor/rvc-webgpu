@@ -222,12 +222,17 @@ function stems(X: CSpec, mask: Float32Array[], outputIs: VrMeta['outputIs']): { 
 }
 
 /** Segment plan: [start, end) samples with OVERLAP between neighbours. */
-export function segments(n: number, sr: number, segSec = SEG_SEC, ovSec = OVERLAP_SEC): [number, number][] {
+/**
+ * ~60 s segments overlapping by >= 4 s. Starts are multiples of `unit` (top-band hop x patch roi), so every segment
+ * sees the same STFT frame and patch grid as whole-song processing and the result matches it outside the overlaps.
+ */
+export function segments(n: number, sr: number, unit: number, segSec = SEG_SEC, ovSec = OVERLAP_SEC): [number, number][] {
   const seg = segSec * sr, ov = ovSec * sr;
   if (n <= seg) return [[0, n]];
+  const step = Math.max(unit, Math.floor((seg - ov) / unit) * unit);
   const out: [number, number][] = [];
-  for (let s = 0; ; s += seg - ov) {
-    const e = Math.min(n, s + seg);
+  for (let s = 0; ; s += step) {
+    const e = Math.min(n, s + step + ov);
     out.push([s, e]);
     if (e === n) break;
   }
@@ -239,7 +244,8 @@ export async function separateVR(
 ): Promise<{ vocals: Stereo; instrumental: Stereo }> {
   if (audio.sr !== mp.sr) throw new AppError('INTERNAL', `VR expects ${mp.sr} Hz input, got ${audio.sr}`);
   const n = audio.l.length;
-  const segs = segments(n, audio.sr);
+  const top = mp.band[Object.keys(mp.band).length];
+  const segs = segments(n, audio.sr, top.hl * meta.roi);
   // pass 1: global coef = max |X| over the whole song (utils.py inference uses the full spectrogram)
   let coef = 0;
   for (const [s, e] of segs) {

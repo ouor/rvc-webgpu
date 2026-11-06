@@ -11,29 +11,37 @@ const isolation = {
   'Cross-Origin-Embedder-Policy': 'require-corp',
 };
 
-// Dev only: serve $MODELS_DIR (default weights/dist, core dev A's artifacts, git-ignored) at /models/ with Range,
-// so VITE_MODEL_BASE_URL=/models/ works without uploading anything.
-function serveModels(): Plugin {
-  const root = resolve(import.meta.dirname, process.env.MODELS_DIR ?? 'weights/dist');
+// Dev only: static dirs with Range. /models/ = $MODELS_DIR (default weights/dist, core dev A's artifacts, git-ignored),
+// so VITE_MODEL_BASE_URL=/models/ works without uploading anything. /__dev/* feed debug.html (test audio, references).
+const devDirs: Record<string, string> = {
+  '/models': process.env.MODELS_DIR ?? 'weights/dist',
+  '/__dev/external': 'external',
+  '/__dev/reference': 'weights/reference',
+};
+
+function serveDirs(): Plugin {
   return {
-    name: 'serve-models',
+    name: 'serve-dev-dirs',
     configureServer(server) {
-      server.middlewares.use('/models', (req, res, next) => {
-        const file = normalize(resolve(root, '.' + decodeURIComponent((req.url ?? '/').split('?')[0])));
-        if (!file.startsWith(root + sep) || !existsSync(file) || !statSync(file).isFile()) return next();
-        const size = statSync(file).size;
-        const m = /bytes=(\d+)-(\d*)/.exec(req.headers.range ?? '');
-        const start = m ? Number(m[1]) : 0;
-        const end = m && m[2] ? Number(m[2]) : size - 1;
-        res.setHeader('Accept-Ranges', 'bytes');
-        res.setHeader('Content-Length', end - start + 1);
-        res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-        if (m) {
-          res.statusCode = 206;
-          res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`);
-        }
-        createReadStream(file, { start, end }).pipe(res);
-      });
+      for (const [mount, dir] of Object.entries(devDirs)) {
+        const root = resolve(import.meta.dirname, dir);
+        server.middlewares.use(mount, (req, res, next) => {
+          const file = normalize(resolve(root, '.' + decodeURIComponent((req.url ?? '/').split('?')[0])));
+          if (!file.startsWith(root + sep) || !existsSync(file) || !statSync(file).isFile()) return next();
+          const size = statSync(file).size;
+          const m = /bytes=(\d+)-(\d*)/.exec(req.headers.range ?? '');
+          const start = m ? Number(m[1]) : 0;
+          const end = m && m[2] ? Number(m[2]) : size - 1;
+          res.setHeader('Accept-Ranges', 'bytes');
+          res.setHeader('Content-Length', end - start + 1);
+          res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+          if (m) {
+            res.statusCode = 206;
+            res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`);
+          }
+          createReadStream(file, { start, end }).pipe(res);
+        });
+      }
     },
   };
 }
@@ -42,7 +50,7 @@ export default defineConfig({
   base: process.env.BASE_PATH ?? '/',
   plugins: [
     react(),
-    serveModels(),
+    serveDirs(),
     VitePWA({
       strategies: 'injectManifest',
       srcDir: 'src',

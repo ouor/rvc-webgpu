@@ -227,7 +227,8 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       const gpu = await probeGpu();
       backend = pickBackend(pref, gpu);
       const threads = configureOrt();
-      repo = new ModelRepo(await loadRegistry(modelBaseUrl, fetchFn), store, modelBaseUrl, fetchFn);
+      const base = new URL(modelBaseUrl, globalThis.location?.href).href; // '/models/' is relative to the app origin
+      repo = new ModelRepo(await loadRegistry(base, fetchFn), store, base, fetchFn);
       await repo.pruneOldRevisions().catch(() => {});
       const est = (await navigator.storage?.estimate?.().catch(() => undefined)) ?? {};
       const persisted = (await navigator.storage?.persisted?.().catch(() => false)) ?? false;
