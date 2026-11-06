@@ -226,6 +226,27 @@ describe('engine run (fake stages)', () => {
     await expect(engine.run(job(), () => {})).resolves.toBeDefined(); // the next run starts uncancelled
   });
 
+  it('download and run exclude each other (M5)', async () => {
+    const { engine, job } = await ready();
+    let release!: () => void;
+    hook.separate = () => new Promise<void>((r) => { release = r; });
+    const running = engine.run(job(), () => {});
+    await new Promise((r) => setTimeout(r, 0));
+    await expect(engine.download(['rmvpe'], () => {})).rejects.toMatchObject({ code: 'BUSY' });
+    release();
+    await running;
+  });
+
+  it('keeps one loaded model and one index (M4)', async () => {
+    const { engine } = await ready();
+    const a = await engine.loadRvcModel(new File([await fakeRvcPth({ salt: 'a' })], 'a.pth'));
+    const ia = await engine.loadIndex(new File([fakeFlatIndex(768, 4, 1)], 'a.index'));
+    const b = await engine.loadRvcModel(new File([await fakeRvcPth({ salt: 'b' })], 'b.pth'));
+    await engine.loadIndex(new File([fakeFlatIndex(768, 4, 2)], 'b.index'));
+    await expect(engine.myModels.save(a.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(engine.myModels.save(b.id, ia.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('MODELS_MISSING before download', async () => {
     const { engine } = await setup(fake);
     const id = await engine.setInput({ sr: 16000, l: new Float32Array(16000), r: new Float32Array(16000) }, { name: 'a', size: 1, lastModified: 1 });

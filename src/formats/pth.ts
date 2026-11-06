@@ -129,7 +129,9 @@ export function unpickle(bytes: Uint8Array): unknown {
       case 'collections OrderedDict': return new Map();
       case 'torch._utils _rebuild_tensor_v2': {
         const [st, offset, shape, stride] = a as [StorageRef, number, number[], number[]];
-        if (!st?.key || !Array.isArray(shape) || !Array.isArray(stride)) throw corrupt('bad tensor record');
+        const nat = (x: unknown) => Number.isSafeInteger(x) && (x as number) >= 0;
+        if (!st?.key || !nat(offset) || !Array.isArray(shape) || !Array.isArray(stride) || !shape.every(nat) || !stride.every(nat))
+          throw corrupt('bad tensor record');
         let s = 1; // only contiguous tensors (what torch.save writes for state_dicts)
         for (let d = shape.length - 1; d >= 0; d--) {
           if (shape[d] !== 1 && stride[d] !== s) throw new AppError('PTH_UNSAFE', 'non-contiguous tensor');

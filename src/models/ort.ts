@@ -1,6 +1,6 @@
 // onnxruntime-web: EP selection, session creation with WebGPU -> WASM fallback, error classification (§10).
 import * as ort from 'onnxruntime-web/webgpu';
-import { AppError } from '../shared/errors';
+import { AppError, toAppError } from '../shared/errors';
 import type { Backend, BackendPref } from '../shared/types';
 
 export type OrtSession = ort.InferenceSession;
@@ -38,12 +38,9 @@ export function pickBackend(pref: BackendPref, gpu: GpuProbe): Backend {
 
 /** Maps ORT / allocation failures to OOM / GPU_LOST, everything else to `fallback`. */
 export function classifyOrtError(e: unknown, fallback: 'BACKEND_INIT' | 'INTERNAL' = 'INTERNAL'): AppError {
-  if (e instanceof AppError) return e;
-  const msg = e instanceof Error ? e.message : String(e);
-  if (e instanceof RangeError || /out of memory|\boom\b|bad_alloc|Array buffer allocation failed|memory access out of bounds/i.test(msg))
-    return new AppError('OOM', 'out of memory', msg, true);
-  if (/device (was )?lost|GPUDevice.*lost|DeviceLost/i.test(msg)) return new AppError('GPU_LOST', 'WebGPU device lost', msg, true);
-  return new AppError(fallback, msg, e instanceof Error ? e.stack : undefined);
+  const a = toAppError(e, fallback); // OOM is decided there, for every error source (R1 M2)
+  if (a.code === fallback && /device (was )?lost|GPUDevice.*lost|DeviceLost/i.test(a.message)) return new AppError('GPU_LOST', 'WebGPU device lost', a.message, true);
+  return a;
 }
 
 /** Creates a session on `backend`; a WebGPU failure retries once on WASM (EX-1). */

@@ -39,8 +39,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
   let store: BlobStore = deps.store ?? new MemoryStore();
   let repo: ModelRepo | undefined;
   let backend: Backend = 'wasm';
-  const cancel = new CancelFlag();
-  let busy = false;
+  let active: CancelFlag | undefined; // the running job or download; one at a time, each with its own flag (R1 M5)
 
   const inputs = new Map<string, Stereo>();
   const models = new Map<string, LoadedModel>();
@@ -117,7 +116,16 @@ export function createEngine(deps: EngineDeps = {}): Engine {
   };
   const runner = new JobRunner(stages);
 
-  function runOnce(job: JobSpec, profile: JobSpec['convert']['chunkProfile'], on: OnProgress): Promise<JobResult> {
+  async function exclusive<T>(f: (flag: CancelFlag) => Promise<T>): Promise<T> {
+    if (active) throw new AppError('BUSY', 'a job or download is already running');
+    const flag = (active = new CancelFlag());
+    try { return await f(flag); } finally { active = undefined; }
+  }
+
+  /** One loaded model and one index at a time (R1 M4); a running job keeps its own until the next load. */
+  const dropAll = (m: Map<string, unknown>) => { if (!active) m.clear(); };
+
+  function runOnce(job: JobSpec, profile: JobSpec['convert']['chunkProfile'], on: OnProgress, cancel: CancelFlag): Promise<JobResult> {
     const input = get(inputs, job.inputId, 'input');
     const model = get(models, job.modelId, 'model');
     const index = job.indexId ? get(indexes, job.indexId, 'index') : undefined;
@@ -125,10 +133,10 @@ export function createEngine(deps: EngineDeps = {}): Engine {
   }
 
   async function loadIndexBlob(file: Blob): Promise<IndexInfo> {
-    const index = await readFaissIndex(file);
-    if (index.d !== 256 && index.d !== 768) throw new AppError('INDEX_DIM_MISMATCH', `index dimension ${index.d}`);
+    const index = await readFaissIndex(file); // rejects dimensions other than 256/768
     const id = await idOf(file);
-    const info: IndexInfo = { id, nVectors: index.nVectors, dim: index.d, nlist: index.nlist, nprobe: index.nprobe, downsampled: index.nVectors < index.ntotal ? index.nVectors : undefined };
+    const info: IndexInfo = { id, nVectors: index.nVectors, dim: index.d as 256 | 768, nlist: index.nlist, nprobe: index.nprobe, downsampled: index.nVectors < index.ntotal ? index.nVectors : undefined };
+    dropAll(indexes);
     indexes.set(id, { info, index, file });
     return info;
   }
@@ -141,6 +149,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
         try {
           const ii = await loadIndexBlob(a.index);
           if (ii.dim === featDim(info.version)) { info.indexId = ii.id; info.index = ii; models.get(info.id)!.indexFile = a.index; }
+          else indexes.delete(ii.id);
         } catch { /* a bad index in a zip does not block the model; UI shows "no index" */ }
       }
       return info;
@@ -152,6 +161,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       try { onnx = readOnnxInfo(bytes); } catch (e) { throw new AppError('ONNX_UNRECOGNIZED', 'not an ONNX model', String(e)); }
       const d = describeOnnx(onnx);
       const info: RvcModelInfo = { id, name: baseName(name), source: 'onnx', version: d.version, f0: d.f0, sr: d.sr ?? 40000, srUnknown: !d.sr, nSpk: 1, bytes: file.size };
+      dropAll(models);
       models.set(id, { kind: 'onnx', info, bytes, onnx, file });
       return info;
     }
@@ -163,6 +173,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       id, name: typeof root.get('model_name') === 'string' ? (root.get('model_name') as string) : baseName(name),
       source: 'pth', version: ckpt.version, f0: ckpt.f0, sr: ckpt.sr, nSpk: ckpt.nSpk, templateId: t.id, bytes: file.size, meta: ckpt.meta,
     };
+    dropAll(models);
     models.set(id, { kind: 'pth', info, ckpt, file });
     return info;
   }
@@ -209,7 +220,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
 
     async plan(job) { return needRepo().plan(requiredIds(job)); },
 
-    async download(ids, on) {
+    download: (ids, on) => exclusive(async (cancel) => {
       const r = needRepo();
       const owner = new Map<string, string>(); // file -> first item that needs it
       for (const id of ids) for (const f of r.files(id)) if (!owner.has(f)) owner.set(f, id);
@@ -223,7 +234,6 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       await navigator.storage?.persist?.().catch(() => false);
       const est = await navigator.storage?.estimate?.().catch(() => undefined);
       if (est?.quota && est.quota - (est.usage ?? 0) < total) throw new AppError('STORAGE_QUOTA', 'not enough storage', `${total} bytes needed`, true);
-      cancel.reset();
       let base = 0;
       for (const f of todo) {
         const item = owner.get(f)!, ib = itemBase.get(item) ?? 0;
@@ -238,32 +248,28 @@ export function createEngine(deps: EngineDeps = {}): Engine {
         itemBase.set(item, ib + bytesOf(f));
       }
       on({ stage: 'download', done: total, total });
-    },
+    }),
 
-    async run(job, on) {
-      if (busy) throw new AppError('BUSY', 'a job is already running');
-      busy = true;
-      cancel.reset();
+    run: (job, on) => exclusive(async (cancel) => {
       try {
         const missing = (await needRepo().plan(requiredIds(job))).filter((d) => !d.cached);
         if (missing.length) throw new AppError('MODELS_MISSING', 'public models not downloaded', missing.map((d) => d.id).join(','), true);
         try {
-          return await runOnce(job, job.convert.chunkProfile, on);
+          return await runOnce(job, job.convert.chunkProfile, on, cancel);
         } catch (e) {
           // §9.2-3: one automatic retry with the low-memory chunk profile
-          if (e instanceof AppError && e.code === 'OOM' && job.convert.chunkProfile === 'normal') return await runOnce(job, 'low', on);
-          throw e;
+          const a = toAppError(e); // JS allocation failures count too (R1 M2)
+          if (a.code === 'OOM' && job.convert.chunkProfile === 'normal') return await runOnce(job, 'low', on, cancel);
+          throw a;
         }
       } catch (e) {
         throw toAppError(e);
-      } finally {
-        busy = false;
       }
-    },
+    }),
 
     async getStems() { return runner.stems ?? null; },
 
-    cancel() { cancel.cancel(); },
+    cancel() { active?.cancel(); },
 
     cache: {
       async list() {
@@ -327,6 +333,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
         if (f.saved.source === 'onnx' && !f.saved.srUnknown) { info.sr = f.saved.sr; info.srUnknown = false; }
         const ii = f.index && (await loadIndexBlob(f.index));
         if (ii && ii.dim === featDim(info.version)) { info.index = ii; info.indexId = ii.id; m.indexFile = f.index; }
+        else if (ii) indexes.delete(ii.id);
         await mine.touch(id, info);
         return info;
       },

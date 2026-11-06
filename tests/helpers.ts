@@ -72,13 +72,14 @@ function pickle(v: unknown): number[] {
 }
 
 /** A tiny RVC inference .pth: config, version, f0 and an fp16 emb_g [nSpk, 256] (all zeros). */
-export async function fakeRvcPth(o: { version?: 'v1' | 'v2'; nSpk?: number; salt?: string } = {}): Promise<Blob> {
+export async function fakeRvcPth(o: { version?: 'v1' | 'v2'; nSpk?: number; salt?: string; embShape?: number[] } = {}): Promise<Blob> {
   const { zipSync } = await import('fflate');
   const nSpk = o.nSpk ?? 1;
   const cfg = [...CFG_V2_40K];
   cfg[15] = nSpk;
   if (o.version === 'v1') cfg[4] = 768; // v1 shares the config layout; the version string selects 256-dim features
-  const root = { weight: { 'emb_g.weight': { tensor: '0', shape: [nSpk, 256] } }, config: cfg, version: o.version ?? 'v2', f0: 1, info: o.salt ?? '1epoch' };
+  const shape = o.embShape ?? [nSpk, 256];
+  const root = { weight: { 'emb_g.weight': { tensor: '0', shape } }, config: cfg, version: o.version ?? 'v2', f0: 1, info: o.salt ?? '1epoch' };
   return new Blob([zipSync({ 'archive/data.pkl': new Uint8Array(pickle(root)), 'archive/data/0': new Uint8Array(nSpk * 256 * 2) }, { level: 0 })]);
 }
 

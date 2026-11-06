@@ -1,7 +1,7 @@
 // Comlink throw handler that keeps AppError (code, detail, recoverable) across the worker boundary (§10).
 // Both sides call installErrorTransfer() once: the worker before expose(), the client before wrap().
 import * as Comlink from 'comlink';
-import { AppError, type ErrorCode } from './errors';
+import { AppError, toAppError, type ErrorCode } from './errors';
 
 interface Wire { code: ErrorCode; message: string; detail?: string; recoverable: boolean; stack?: string }
 type ThrowHandler = Comlink.TransferHandler<unknown, unknown>;
@@ -11,12 +11,9 @@ export function installErrorTransfer(): void {
   Comlink.transferHandlers.set('throw', {
     canHandle: prev.canHandle,
     serialize(v: unknown) {
-      const e = (v as { value: unknown }).value;
-      if (e instanceof AppError) {
-        const w: Wire = { code: e.code, message: e.message, detail: e.detail, recoverable: e.recoverable, stack: e.stack };
-        return [{ isError: true, value: { appError: w } }, []];
-      }
-      return prev.serialize(v);
+      const e = toAppError((v as { value: unknown }).value); // every rejection crosses as an AppError (R1 M1)
+      const w: Wire = { code: e.code, message: e.message, detail: e.detail, recoverable: e.recoverable, stack: e.stack };
+      return [{ isError: true, value: { appError: w } }, []];
     },
     deserialize(s: unknown) {
       const w = (s as { value?: { appError?: Wire } }).value?.appError;

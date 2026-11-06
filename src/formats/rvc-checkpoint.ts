@@ -48,6 +48,8 @@ export async function readRvcCheckpoint(blob: Blob): Promise<RvcCheckpoint> {
   for (const [k, v] of w) if (isTensor(v)) weights.set(String(k), v);
   const emb = weights.get('emb_g.weight');
   if (!emb) throw new AppError('PTH_UNSUPPORTED_ARCH', 'emb_g.weight missing');
+  // emb_g is used outside the template graph (g = emb_g[sid]), so the manifest shape check does not cover it (R1 M8)
+  if (emb.shape.length !== 2 || emb.shape[0] < 1 || emb.shape[1] < 1) throw new AppError('PTH_CORRUPT', `emb_g shape ${emb.shape}`);
 
   const version = (str(root.get('version')) ?? 'v1') as 'v1' | 'v2';
   if (version !== 'v1' && version !== 'v2') throw new AppError('PTH_UNSUPPORTED_ARCH', `version ${String(version)}`);

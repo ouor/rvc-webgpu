@@ -41,6 +41,8 @@ async function readHeader(c: Cursor) {
   await c.u8(); // is_trained
   const metric = await c.i32();
   if (metric !== 1) throw unsupported(`metric ${metric} (only L2 is supported)`);
+  // RVC indexes hold v1 (256) or v2 (768) features; checked before any vector is read (R1 M9)
+  if (d !== 256 && d !== 768) throw new AppError('INDEX_DIM_MISMATCH', `index dimension ${d}`);
   return { d, ntotal };
 }
 
@@ -63,10 +65,12 @@ function keeper(keep: number, total: number) {
 
 function sample(vecs: Float32Array, ids: Int32Array, d: number, take: () => boolean): [Float32Array, Int32Array] {
   const n = vecs.length / d;
-  const out = new Float32Array(vecs.length), oid = new Int32Array(n);
+  const keep = new Uint8Array(n);
   let m = 0;
-  for (let i = 0; i < n; i++) if (take()) { out.set(vecs.subarray(i * d, i * d + d), m * d); oid[m++] = ids[i]; }
-  return [out.slice(0, m * d), oid.slice(0, m)];
+  for (let i = 0; i < n; i++) if ((keep[i] = take() ? 1 : 0)) m++;
+  const out = new Float32Array(m * d), oid = new Int32Array(m); // exact size: no second full copy
+  for (let i = 0, k = 0; i < n; i++) if (keep[i]) { out.set(vecs.subarray(i * d, i * d + d), k * d); oid[k++] = ids[i]; }
+  return [out, oid];
 }
 
 const iota = (n: number) => Int32Array.from({ length: n }, (_, i) => i);
@@ -86,13 +90,14 @@ export async function readFaissIndex(blob: Blob, cap = MAX_VECTORS): Promise<Ivf
   const { d, ntotal } = await readHeader(c);
   const nlist = await c.u64();
   const nprobe = await c.u64();
+  if (ntotal === 0) throw new AppError('INDEX_EMPTY', 'index has no vectors (trained_*.index?)');
+  if (nlist < 1 || nlist > ntotal) throw unsupported(`nlist ${nlist} for ${ntotal} vectors`);
   if (await c.i32() !== fourcc('IxF2')) throw unsupported('IVF quantizer is not IndexFlatL2');
   const q = await readFlat(c);
   if (q.ntotal !== nlist || q.d !== d) throw unsupported('quantizer shape mismatch');
   const dmType = await c.u8(); // direct map: type, array, [hashtable]
   c.skip((await c.u64()) * 8);
   if (dmType === 2) c.skip((await c.u64()) * 16);
-  if (ntotal === 0) throw new AppError('INDEX_EMPTY', 'index has no vectors (trained_*.index?)');
 
   const ilh = await c.i32();
   if (ilh !== fourcc('ilar')) throw unsupported('inverted lists are not "ilar"');
@@ -107,8 +112,13 @@ export async function readFaissIndex(blob: Blob, cap = MAX_VECTORS): Promise<Ivf
     if (sv !== nlist) throw unsupported('bad list sizes');
     raw.forEach((v, i) => (sizes[i] = Number(v)));
   } else if (lt === fourcc('sprs')) {
-    for (let j = 0; j + 1 < raw.length; j += 2) sizes[Number(raw[j])] = Number(raw[j + 1]);
+    for (let j = 0; j + 1 < raw.length; j += 2) {
+      const l = Number(raw[j]);
+      if (l >= nlist) throw unsupported('list number out of range');
+      sizes[l] = Number(raw[j + 1]);
+    }
   } else throw unsupported('unknown list size encoding');
+  if (sizes.reduce((a, b) => a + b, 0) !== ntotal) throw unsupported('list sizes do not add up to ntotal');
 
   const take = keeper(cap, ntotal);
   const lists: Float32Array[] = [], idLists: Int32Array[] = [];

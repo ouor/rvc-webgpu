@@ -21,9 +21,14 @@ export class AppError extends Error {
 
 export const isAppError = (e: unknown): e is AppError => e instanceof AppError;
 
-/** Wraps unknown throwables so callers always see an AppError. */
+// Allocation failures from JS (typed arrays), WASM memory growth and ORT. Not "memory access out of bounds":
+// that WASM trap is nearly always a shape bug, and an OOM retry would only hide it (R1 M2).
+const OOM_RE = /out of memory|\boom\b|bad_alloc|allocation failed|could not allocate|Maximum memory size exceeded/i;
+
+/** Wraps unknown throwables so callers always see an AppError; allocation failures become a recoverable OOM. */
 export function toAppError(e: unknown, fallback: ErrorCode = 'INTERNAL'): AppError {
   if (e instanceof AppError) return e;
   const msg = e instanceof Error ? e.message : String(e);
+  if (OOM_RE.test(msg)) return new AppError('OOM', 'out of memory', msg, true);
   return new AppError(fallback, msg, e instanceof Error ? e.stack : undefined);
 }

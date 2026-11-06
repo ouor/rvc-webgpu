@@ -35,12 +35,15 @@ const upsampleOf = (sr: number) => (sr === 32000 ? 320 : sr === 48000 ? 480 : 40
 export async function createTemplateNet(
   info: RvcModelInfo, ckpt: RvcCheckpoint, template: { graph: Uint8Array; manifest: Manifest }, backend: Backend,
 ): Promise<RvcNet> {
-  const { session, backend: used } = await createSessionFromParts(
-    { graph: template.graph, manifest: template.manifest, pth: ckpt.pth, tensors: ckpt.weights }, backend, 'PTH_UNSUPPORTED_ARCH');
+  // emb_g is read and checked before the session exists, so a failure here leaks nothing (R1 L3)
   const emb = ckpt.weights.get('emb_g.weight')!;
+  const gin = emb.shape[1];
+  const g = template.manifest.inputs.find((x) => x.name === 'g');
+  if (g && typeof g.shape[1] === 'number' && g.shape[1] !== gin) throw new AppError('PTH_UNSUPPORTED_ARCH', `speaker embedding ${gin}, template expects ${g.shape[1]}`);
   const embAll = new Float32Array(numel(emb.shape));
   toFloat32(emb.dtype, await ckpt.pth.read(emb), embAll);
-  const gin = emb.shape[1];
+  const { session, backend: used } = await createSessionFromParts(
+    { graph: template.graph, manifest: template.manifest, pth: ckpt.pth, tensors: ckpt.weights }, backend, 'PTH_UNSUPPORTED_ARCH');
   const upp = Number(template.manifest.meta.upp ?? upsampleOf(info.sr));
   const tplSr = Number(template.manifest.meta.sr ?? info.sr);
   const hasPhase = template.manifest.inputs.some((x) => x.name === 'phase');
