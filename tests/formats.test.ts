@@ -37,8 +37,12 @@ describe('pickle allowlist (AC-23)', () => {
     const train = pkl(0x7d, 0x28, ...u('model'), 0x7d, ...u('iteration'), 0x4b, 1, 0x75);
     expect(await code(readRvcCheckpoint(ptZip(train)))).toBe('PTH_TRAINING_CKPT');
   });
-  it('rejects non-zip input', async () => {
-    expect(await code(readPth(new Blob([new Uint8Array(1000)])))).toBe('PTH_NOT_ZIP');
+  it('tells a legacy pickle from a cut-off or non-model file (QA B10)', async () => {
+    expect(await code(readPth(new Blob([pkl(0x7d)])))).toBe('PTH_NOT_ZIP'); // legacy torch.save starts with PROTO
+    const zip = new Uint8Array(await ptZip(pkl(0x7d)).arrayBuffer());
+    expect(await code(readPth(new Blob([zip.slice(0, zip.length - 30)])))).toBe('PTH_CORRUPT'); // truncated download
+    expect(await code(readPth(new Blob([strToU8('just some text, renamed to .pth')])))).toBe('PTH_CORRUPT');
+    expect(await code(readPth(new Blob([new Uint8Array(1000)])))).toBe('PTH_CORRUPT');
   });
 });
 

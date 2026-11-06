@@ -3,7 +3,11 @@
 import { createEngineClient } from '../app/engine-client';
 import { decodeFile } from '../audio/decode';
 import { resample } from '../dsp/resample';
+import { stft } from '../dsp/stft';
 import { extractF0 } from '../engine/rvc/f0';
+import { createTemplateNet, WEBGPU_MAX_FRAMES } from '../engine/rvc/net';
+import { synthesizeChunk } from '../engine/rvc/pipeline';
+import { readRvcCheckpoint } from '../formats/rvc-checkpoint';
 import { readPth } from '../formats/pth';
 import { createSessionFromParts, tensorMap, type Manifest } from '../models/loader';
 import { configureOrt, releaseSession } from '../models/ort';
@@ -12,7 +16,7 @@ import { DEFAULT_CONVERT, DEFAULT_SEPARATE, type BackendPref, type JobResult, ty
 const q = new URLSearchParams(location.search);
 const model = q.get('model') ?? 'kyubey';
 const src = q.get('src') ?? 'ref';
-const mode = (q.get('mode') ?? 'song') as 'song' | 'voice';
+const mode = (q.get('mode') ?? 'song') as 'song' | 'voice'; // or 'synth' (QA B3 stage test)
 const range = q.get('end') ? { start: Number(q.get('start') ?? 0), end: Number(q.get('end')) } : undefined;
 const out = document.getElementById('log')!;
 const lines: string[] = [];
@@ -53,6 +57,75 @@ async function f0Of(signals: Float32Array[]): Promise<Float64Array[]> {
     for (const x of signals) out.push(await extractF0(resample(x, 40000, 16000), session, ctx, manifest.meta as never));
     return out;
   } finally { await releaseSession(session); }
+}
+
+/** Pearson correlation of log-magnitude spectra (1024/512) of one second; phase-insensitive, as QA's log-mel check. */
+function specCorr(a: Float32Array, b: Float32Array): number {
+  const A = stft(a, 1024, 512), B = stft(b, 1024, 512);
+  let n = 0, sa = 0, sb = 0, sab = 0, saa = 0, sbb = 0;
+  for (let i = 0; i < A.re.length; i++) {
+    const x = Math.log(1e-6 + Math.hypot(A.re[i], A.im[i])), y = Math.log(1e-6 + Math.hypot(B.re[i], B.im[i]));
+    n++; sa += x; sb += y; sab += x * y; saa += x * x; sbb += y * y;
+  }
+  return (sab - sa * sb / n) / Math.sqrt((saa - sa * sa / n) * (sbb - sb * sb / n));
+}
+const rms = (x: Float32Array) => Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length);
+
+/** QA B3 stage test: the reference feats/pitch/rnd/noise through synthesizeChunk on `backend`, vs rawIr0 per second. */
+async function synth() {
+  configureOrt();
+  const backend = (q.get('backend') ?? 'webgpu') as 'webgpu' | 'wasm';
+  const R = '/__dev/reference/bunnygirl-rvc-kyubey/';
+  const meta = (await (await fetchBlob(R + 'case.json')).text());
+  const chunks = (JSON.parse(meta).meta.chunks) as { audio: [number, number]; f0Frames: [number, number]; featFrames: number; T: number }[];
+  const [feats, pitchf, rnd, noise, raw] = await Promise.all(['feats', 'pitchf', 'rnd', 'noise', 'rawIr0'].map((n) => fetchF32(R + n + '.bin')));
+  const pitch = new BigInt64Array(await (await fetchBlob(R + 'pitch.bin')).arrayBuffer());
+  const ckpt = await readRvcCheckpoint(await fetchBlob('/__dev/external/weight/rvc-kyubey.pth'));
+  const base = import.meta.env.VITE_MODEL_BASE_URL ?? '/models/';
+  const graph = new Uint8Array(await (await fetchBlob(base + 'rvc/v2-f0-40k.onnx')).arrayBuffer());
+  const manifest = JSON.parse(await (await fetchBlob(base + 'rvc/v2-f0-40k.manifest.json')).text()) as Manifest;
+  const info = { id: 'k', name: 'k', source: 'pth', version: 'v2', f0: true, sr: 40000, nSpk: ckpt.nSpk, bytes: 0 } as const;
+  const net = await createTemplateNet({ ...info }, ckpt, { graph, manifest }, backend, q.get('maxFrames') ? Number(q.get('maxFrames')) : undefined);
+  log(`synth on ${net.backend}, max frames per call ${q.get('maxFrames') ?? (net.backend === 'webgpu' ? WEBGPU_MAX_FRAMES : 'all')}`);
+  const totalT = chunks.reduce((a, c) => a + c.T, 0);
+  let fo = 0, ro = 0, no = 0, oo = 0;
+  const bad: number[] = [], badSpec: number[] = [];
+  let minSpec = 1, minRms = Infinity, maxRms = 0;
+  let s = 0, e = 0;
+  for (const c of chunks) {
+    const r = c.T;
+    const rc = new Float32Array(192 * r);
+    for (let k = 0; k < 192; k++) rc.set(rnd.subarray(k * totalT + ro, k * totalT + ro + r), k * r);
+    const draws = [rc, noise.subarray(no, no + r * 400)];
+    const rng = { next: () => 0, gaussian: () => draws.shift()! };
+    const f = { data: feats.subarray(fo * 768, (fo + c.featFrames) * 768), frames: c.featFrames, dim: 768 as const };
+    const p = { pitch: pitch.subarray(c.f0Frames[0], c.f0Frames[1]), pitchf: pitchf.subarray(c.f0Frames[0], c.f0Frames[1]) };
+    const t0 = performance.now();
+    const y = await synthesizeChunk(c.audio[1] - c.audio[0], f, undefined, p, net, { ...DEFAULT_CONVERT, indexRate: 0 }, rng);
+    const got = y.subarray(40000, y.length - 40000);
+    const ref = raw.subarray(oo, oo + got.length);
+    for (let a = 0; a + 40000 <= got.length; a += 40000) {
+      let ss = 0, ee = 0;
+      for (let i = a; i < a + 40000; i++) { ss += ref[i] ** 2; ee += (got[i] - ref[i]) ** 2; }
+      s += ss; e += ee;
+      if (10 * Math.log10(ss / ee) < 20) bad.push(Math.round((oo + a) / 40000));
+      if (ss / 40000 > 1e-5) { // skip near-silent seconds
+        const g1 = got.subarray(a, a + 40000), r1 = ref.subarray(a, a + 40000);
+        const c = specCorr(g1, r1), q1 = rms(g1) / rms(r1);
+        minSpec = Math.min(minSpec, c); minRms = Math.min(minRms, q1); maxRms = Math.max(maxRms, q1);
+        if (c < 0.85) badSpec.push(Math.round((oo + a) / 40000));
+        if (q1 < 0.5 || q1 > 2) log(`    second ${Math.round((oo + a) / 40000)}: RMS ratio ${q1.toFixed(2)} (ref RMS ${rms(r1).toFixed(4)}), spec corr ${c.toFixed(3)}`);
+      }
+    }
+    log(`  chunk T=${c.T}: ${(performance.now() - t0).toFixed(0)} ms, SNR ${snrDb(got, ref).toFixed(1)} dB`);
+    fo += c.featFrames; ro += r; no += r * 400; oo += got.length;
+  }
+  state.metrics.synthSnr = 10 * Math.log10(s / e);
+  state.metrics.badSeconds = bad.length;
+  state.metrics.badSpecSeconds = badSpec.length;
+  log(`spectral corr per second: min ${minSpec.toFixed(3)}, under 0.85: ${badSpec.length} [${badSpec.join(',')}]; RMS ratio ${minRms.toFixed(2)}..${maxRms.toFixed(2)}`);
+  log(`synth vs rawIr0: SNR ${state.metrics.synthSnr.toFixed(1)} dB, seconds under 20 dB: ${bad.length} [${bad.join(',')}]`);
+  await net.release();
 }
 
 async function input(): Promise<Stereo> {
@@ -118,5 +191,5 @@ async function run() {
   engine.terminate();
 }
 
-document.getElementById('run')!.onclick = () => run().catch((e) => { state.error = String(e?.code ?? '') + ' ' + String(e?.message ?? e); log('ERROR ' + state.error); }).finally(() => { state.done = true; });
+document.getElementById('run')!.onclick = () => (q.get('mode') === 'synth' ? synth() : run()).catch((e) => { state.error = String(e?.code ?? '') + ' ' + String(e?.message ?? e); log('ERROR ' + state.error); }).finally(() => { state.done = true; });
 if (q.has('autorun')) document.getElementById('run')!.click();

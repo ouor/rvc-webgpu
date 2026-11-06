@@ -7,7 +7,7 @@ import { readModelArchive } from '../src/formats/archive';
 import { readFaissIndex } from '../src/formats/faiss';
 import { readRvcCheckpoint } from '../src/formats/rvc-checkpoint';
 import { readOnnxInfo, type OnnxInfo } from '../src/formats/onnx-meta';
-import { describeOnnx } from '../src/engine/rvc/net';
+import { describeOnnx, runPieces, synthPieces } from '../src/engine/rvc/net';
 import { classifyOrtError } from '../src/models/ort';
 import { AppError, toAppError } from '../src/shared/errors';
 import { installErrorTransfer } from '../src/shared/rpc';
@@ -89,9 +89,34 @@ describe('describeOnnx (M10)', () => {
   ] as const)('%j', (names, c, want) => {
     expect(describeOnnx(onnx([...names], c))).toMatchObject(want);
   });
+  it('rejects fixed-length exports at load (QA B12)', () => {
+    const fixed: OnnxInfo = { metadata: {}, inputs: [io('phone', [1, 200, 768]), io('phone_lengths'), io('ds'), io('rnd')], outputs: [] };
+    expect(() => describeOnnx(fixed)).toThrow(expect.objectContaining({ code: 'ONNX_UNRECOGNIZED' }));
+  });
   it('reads sr from metadata, rejects unknown schemas', () => {
     expect(describeOnnx(onnx(['ds', 'rnd'], 768, { model_info: '{"sr":48000}' })).sr).toBe(48000);
     expect(() => describeOnnx(onnx(['x']))).toThrow(AppError);
+  });
+});
+
+describe('WebGPU synthesis pieces (QA B3)', () => {
+  it.each([[3600, 3600], [3601, 3600], [4550, 3600], [12000, 3600], [5000, 1000]])('T=%i max=%i: cores tile [0,T), windows fit', (T, max) => {
+    const ps = synthPieces(T, max);
+    expect(ps[0].a).toBe(0);
+    expect(ps.at(-1)!.b).toBe(T);
+    for (let i = 0; i < ps.length; i++) {
+      const p = ps[i];
+      if (i) expect(p.a).toBe(ps[i - 1].b);
+      expect(p.e - p.s).toBeLessThanOrEqual(max);
+      expect(p.s).toBeGreaterThanOrEqual(0);
+      expect(p.e).toBeLessThanOrEqual(T);
+      if (T > max) expect(Math.min(p.a - p.s || Infinity, p.e - p.b || Infinity)).toBeGreaterThanOrEqual(100); // context
+    }
+  });
+  it('runPieces puts each kept part at its place', async () => {
+    const upp = 4, T = 5000;
+    const y = await runPieces(T, upp, 1000, async (s, e) => Float32Array.from({ length: (e - s) * upp }, (_, k) => s * upp + k));
+    expect(y.every((v, k) => v === k)).toBe(true);
   });
 });
 

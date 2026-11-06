@@ -34,7 +34,13 @@ export async function readZipIndex(blob: Blob): Promise<ZipIndex> {
   const tdv = new DataView(tail.buffer);
   let eocd = -1;
   for (let i = tail.length - 22; i >= 0; i--) if (tdv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
-  if (eocd < 0) throw new AppError('PTH_NOT_ZIP', 'not a zip-format checkpoint (legacy torch.save or not a model)');
+  if (eocd < 0) {
+    // QA B10: only a legacy torch.save (a bare pickle, first byte PROTO 0x80) is "too old"; a zip without its end
+    // (cut-off download) or any other file is damaged / not a model
+    const head = await bytesOf(blob.slice(0, 1));
+    if (head[0] === 0x80) throw new AppError('PTH_NOT_ZIP', 'legacy (non-zip) torch.save checkpoint');
+    throw corrupt(blob.size >= 4 ? 'zip end record missing (truncated file or not a model)' : 'empty file');
+  }
   let total = tdv.getUint16(eocd + 10, true);
   let cdSize = tdv.getUint32(eocd + 12, true);
   let cdOff = tdv.getUint32(eocd + 16, true);
