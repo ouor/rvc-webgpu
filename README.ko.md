@@ -1,4 +1,4 @@
-# Web RVC
+# <img src="docs/images/icon.svg" width="32" height="32" align="top" alt=""> Web RVC
 
 [English](README.md)
 
