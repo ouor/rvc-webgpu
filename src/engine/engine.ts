@@ -2,37 +2,28 @@
 // No DOM here; storage and fetch are injected so the same code runs in vitest (Node).
 import { AppError, toAppError } from '../shared/errors';
 import { PUBLIC_IDS } from '../shared/types';
-import type { Backend, CacheEntry, Engine, ImportResult, IndexInfo, JobResult, JobSpec, OnProgress, RvcModelInfo, Stereo } from '../shared/types';
+import type { Backend, CacheEntry, Engine, ImportResult, JobResult, JobSpec, OnProgress, Stereo } from '../shared/types';
 import { resample } from '../dsp/resample';
-import { readFaissIndex, type IvfIndex } from '../formats/faiss';
-import { readModelArchive } from '../formats/archive';
-import { readOnnxInfo, type OnnxInfo } from '../formats/onnx-meta';
-import { readRvcCheckpoint, type RvcCheckpoint } from '../formats/rvc-checkpoint';
 import { configureOrt, pickBackend, probeGpu, releaseSession, type OrtSession } from '../models/ort';
 import { createSessionFromParts, tensorMap } from '../models/loader';
 import { loadRegistry, ModelRepo, type Opened, type PublicId, type Registry } from '../models/registry';
 import { MemoryStore, type BlobStore } from '../models/store';
-import { modelIdOf, MyModelStore } from '../models/my-models';
+import { MyModelStore } from '../models/my-models';
 import { publicDir } from '../models/layout';
 import { CancelFlag } from './ctx';
 import { JobRunner, type Stages } from './run';
-import { checkVrParams, separateVR, type VrBandParams, type VrMeta } from './separate/vr';
+import { Library, type LoadedModel } from './library';
+import { checkVrParams, separateVR, type VrBandParams } from './separate/vr';
+import { checkMeta, checkRegistry } from '../models/contract';
 import { extractF0 } from './rvc/f0';
 import { extractFeatures, featDim } from './rvc/features';
-import { createOnnxNet, createTemplateNet, describeOnnx, type RvcNet } from './rvc/net';
+import { createOnnxNet, createTemplateNet, type RvcNet } from './rvc/net';
 
 /** Injection points for tests: storage, network, a registry in place of the bundled/fetched one, model stages. */
 export interface EngineDeps { store?: BlobStore; fetch?: typeof fetch; registry?: Registry; stages?: Partial<Stages> }
 
-// `stored` = my-model id when `file` is that saved model's OPFS file (see myModels.remove).
-type LoadedModel =
-  | { kind: 'pth'; info: RvcModelInfo; ckpt: RvcCheckpoint; file: Blob; indexFile?: Blob; stored?: string }
-  | { kind: 'onnx'; info: RvcModelInfo; bytes: Uint8Array; onnx: OnnxInfo; file: Blob; indexFile?: Blob; stored?: string };
-
 const MAX_SECONDS = 20 * 60; // IN-3 hard limit
 const MIN_SECONDS = 1; // shorter than the RMS window (0.5 s) and the 1 s chunk padding gives nothing usable (R1 M3)
-const idOf = modelIdOf;
-const baseName = (n: string) => n.replace(/\.[^.]+$/, '');
 
 export function createEngine(deps: EngineDeps = {}): Engine {
   const fetchFn = deps.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
@@ -42,20 +33,14 @@ export function createEngine(deps: EngineDeps = {}): Engine {
   let active: CancelFlag | undefined; // the running job or download; one at a time, each with its own flag (R1 M5)
 
   const inputs = new Map<string, Stereo>();
-  const models = new Map<string, LoadedModel>();
-  const indexes = new Map<string, { info: IndexInfo; index: IvfIndex; file: Blob }>();
+  const lib = new Library((sig) => needRepo().templateFor(sig), () => !!active);
   const mine = new MyModelStore(() => store);
 
   const needRepo = () => { if (!repo) throw new AppError('INTERNAL', 'engine.init() not called'); return repo; };
-  const get = <T>(m: Map<string, T>, id: string | undefined, what: string): T => {
-    const v = id ? m.get(id) : undefined;
-    if (!v) throw new AppError('NOT_FOUND', `unknown ${what} ${id}`);
-    return v;
-  };
 
   /** Public model ids a job needs (CA-6: no separation model in voice mode). */
   function requiredIds(job: JobSpec): string[] {
-    const m = get(models, job.modelId, 'model');
+    const m = lib.model(job.modelId);
     const ids: string[] = [PUBLIC_IDS.contentvec];
     if (m.info.f0) ids.push(PUBLIC_IDS.rmvpe);
     if (job.mode === 'song') ids.push(PUBLIC_IDS.separator);
@@ -88,14 +73,14 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       try {
         const mp = opened.params as VrBandParams;
         checkVrParams(mp);
-        const meta = opened.manifest.meta as unknown as VrMeta;
+        const meta = checkMeta(PUBLIC_IDS.separator, opened.manifest.meta);
         const a = audio.sr === mp.sr ? audio : { sr: mp.sr, l: resample(audio.l, audio.sr, mp.sr), r: resample(audio.r, audio.sr, mp.sr) };
         return await separateVR(a, s, mp, meta, { aggressiveness }, ctx(used));
       } finally { await releaseSession(s); }
     },
     async f0(padded, ctx) {
       const { s, opened, backend: used } = await openPublic(PUBLIC_IDS.rmvpe);
-      try { return await extractF0(padded, s, ctx(used), opened.manifest.meta as { threshold?: number; centsOffset?: number }); }
+      try { return await extractF0(padded, s, ctx(used), checkMeta(PUBLIC_IDS.rmvpe, opened.manifest.meta)); }
       finally { await releaseSession(s); }
     },
     async features(chunks, v, ctx) {
@@ -111,7 +96,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
         return out;
       } finally { await releaseSession(s); }
     },
-    net: (info) => createNet(get(models, info.id, 'model')),
+    net: (info) => createNet(lib.model(info.id)),
     ...deps.stages,
   };
   const runner = new JobRunner(stages);
@@ -122,60 +107,12 @@ export function createEngine(deps: EngineDeps = {}): Engine {
     try { return await f(flag); } finally { active = undefined; }
   }
 
-  /** One loaded model and one index at a time (R1 M4); a running job keeps its own until the next load. */
-  const dropAll = (m: Map<string, unknown>) => { if (!active) m.clear(); };
-
   function runOnce(job: JobSpec, profile: JobSpec['convert']['chunkProfile'], on: OnProgress, cancel: CancelFlag): Promise<JobResult> {
-    const input = get(inputs, job.inputId, 'input');
-    const model = get(models, job.modelId, 'model');
-    const index = job.indexId ? get(indexes, job.indexId, 'index') : undefined;
+    const input = inputs.get(job.inputId);
+    if (!input) throw new AppError('NOT_FOUND', `unknown input ${job.inputId}`);
+    const model = lib.model(job.modelId);
+    const index = job.indexId ? lib.index(job.indexId) : undefined;
     return runner.run({ spec: job, audio: crop(input, job.range), model: model.info, index: index && { id: job.indexId!, index: index.index }, profile }, on, cancel);
-  }
-
-  async function loadIndexBlob(file: Blob): Promise<IndexInfo> {
-    const index = await readFaissIndex(file); // rejects dimensions other than 256/768
-    const id = await idOf(file);
-    const info: IndexInfo = { id, nVectors: index.nVectors, dim: index.d as 256 | 768, nlist: index.nlist, nprobe: index.nprobe, downsampled: index.nVectors < index.ntotal ? index.nVectors : undefined };
-    dropAll(indexes);
-    indexes.set(id, { info, index, file });
-    return info;
-  }
-
-  async function loadModelBlob(file: Blob, name: string): Promise<RvcModelInfo> {
-    if (/\.zip$/i.test(name)) {
-      const a = await readModelArchive(file);
-      const info = await loadModelBlob(a.model, a.model.name);
-      if (a.index) {
-        try {
-          const ii = await loadIndexBlob(a.index);
-          if (ii.dim === featDim(info.version)) { info.indexId = ii.id; info.index = ii; models.get(info.id)!.indexFile = a.index; }
-          else indexes.delete(ii.id);
-        } catch { /* a bad index in a zip does not block the model; UI shows "no index" */ }
-      }
-      return info;
-    }
-    const id = await idOf(file);
-    if (/\.onnx$/i.test(name)) {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      let onnx: OnnxInfo;
-      try { onnx = readOnnxInfo(bytes); } catch (e) { throw new AppError('ONNX_UNRECOGNIZED', 'not an ONNX model', String(e)); }
-      const d = describeOnnx(onnx);
-      const info: RvcModelInfo = { id, name: baseName(name), source: 'onnx', version: d.version, f0: d.f0, sr: d.sr ?? 40000, srUnknown: !d.sr, nSpk: 1, bytes: file.size };
-      dropAll(models);
-      models.set(id, { kind: 'onnx', info, bytes, onnx, file });
-      return info;
-    }
-    const ckpt = await readRvcCheckpoint(file);
-    const t = needRepo().templateFor(ckpt.signature);
-    if (!t) throw new AppError('PTH_UNSUPPORTED_ARCH', 'no template for this model configuration', ckpt.signature);
-    const root = ckpt.pth.root as Map<string, unknown>;
-    const info: RvcModelInfo = {
-      id, name: typeof root.get('model_name') === 'string' ? (root.get('model_name') as string) : baseName(name),
-      source: 'pth', version: ckpt.version, f0: ckpt.f0, sr: ckpt.sr, nSpk: ckpt.nSpk, templateId: t.id, bytes: file.size, meta: ckpt.meta,
-    };
-    dropAll(models);
-    models.set(id, { kind: 'pth', info, ckpt, file });
-    return info;
   }
 
   const engine: Engine = {
@@ -188,7 +125,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       backend = pickBackend(pref, gpu);
       const threads = configureOrt();
       const base = new URL(modelBaseUrl, globalThis.location?.href).href; // '/models/' is relative to the app origin
-      repo = new ModelRepo(deps.registry ?? (await loadRegistry(base, fetchFn)), store, base, fetchFn);
+      repo = new ModelRepo(deps.registry ? checkRegistry(deps.registry) : await loadRegistry(base, fetchFn), store, base, fetchFn);
       await repo.pruneOldRevisions().catch(() => {});
       const est = (await navigator.storage?.estimate?.().catch(() => undefined)) ?? {};
       const persisted = (await navigator.storage?.persisted?.().catch(() => false)) ?? false;
@@ -207,16 +144,16 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       return id;
     },
 
-    loadRvcModel: (file) => loadModelBlob(file, file.name),
+    loadRvcModel: (file) => lib.loadModel(file, file.name),
 
     async setOnnxModelSr(modelId, sr) {
-      const m = get(models, modelId, 'model');
+      const m = lib.model(modelId);
       if (m.kind !== 'onnx') throw new AppError('INTERNAL', 'sample rate is fixed for .pth models');
       m.info.sr = sr;
       m.info.srUnknown = false;
     },
 
-    loadIndex: (file) => loadIndexBlob(file),
+    loadIndex: (file) => lib.loadIndex(file),
 
     async plan(job) { return needRepo().plan(requiredIds(job)); },
 
@@ -313,43 +250,27 @@ export function createEngine(deps: EngineDeps = {}): Engine {
 
     myModels: {
       async save(modelId, indexId) {
-        const m = get(models, modelId, 'model');
-        const ix = indexId ? get(indexes, indexId, 'index') : m.info.indexId ? indexes.get(m.info.indexId) : undefined;
+        const m = lib.model(modelId);
+        const ix = indexId ? lib.index(indexId) : m.info.indexId ? lib.loadedIndex(m.info.indexId) : undefined;
         if (ix && ix.info.dim !== featDim(m.info.version)) throw new AppError('INDEX_DIM_MISMATCH', `index dimension ${ix.info.dim}`, undefined, true);
         await mine.save({ info: m.info, file: m.file }, ix && { info: ix.info, file: ix.file });
       },
       list: () => mine.list(),
       async rename(id, name) {
         const n = await mine.rename(id, name);
-        const loaded = models.get(id);
+        const loaded = lib.loaded(id);
         if (loaded) loaded.info.name = n;
       },
       async open(id) {
         const f = await mine.files(id);
-        const info = await loadModelBlob(f.model, `${f.saved.name}.${f.saved.source}`);
-        const m = models.get(info.id)!;
-        m.stored = id;
+        const info = await lib.loadModel(f.model, `${f.saved.name}.${f.saved.source}`, { index: f.index, stored: id });
         info.name = f.saved.name;
         if (f.saved.source === 'onnx' && !f.saved.srUnknown) { info.sr = f.saved.sr; info.srUnknown = false; }
-        const ii = f.index && (await loadIndexBlob(f.index));
-        if (ii && ii.dim === featDim(info.version)) { info.index = ii; info.indexId = ii.id; m.indexFile = f.index; }
-        else if (ii) indexes.delete(ii.id);
         await mine.touch(id, info);
         return info;
       },
       async remove(id) {
-        // Loaded blobs that are this model's OPFS files would become unreadable: keep a memory copy first,
-        // so the model still runs and can be saved again.
-        for (const m of models.values()) {
-          if (m.stored !== id) continue;
-          m.file = new Blob([await m.file.arrayBuffer()]);
-          if (m.indexFile) {
-            const copy = new Blob([await m.indexFile.arrayBuffer()]);
-            for (const ix of indexes.values()) if (ix.file === m.indexFile) ix.file = copy;
-            m.indexFile = copy;
-          }
-          m.stored = undefined;
-        }
+        await lib.detachStored(id); // its loaded OPFS Files would become unreadable
         await mine.remove(id);
       },
     },

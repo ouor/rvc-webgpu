@@ -83,8 +83,7 @@ describe.each([['rvc-kyubey.index', 768], ['rvc-nemu.index', 768]])('faiss %s', 
   });
 });
 
-it('faiss: down-samples above the cap', async () => {
-  if (!has('rvc-kyubey.index')) return;
+it.skipIf(!has('rvc-kyubey.index'))('faiss: down-samples above the cap', async () => {
   const idx = await readFaissIndex(await openAsBlob(join(W, 'rvc-kyubey.index')), 5000);
   expect(idx.nVectors).toBeLessThan(idx.ntotal);
   expect(Math.abs(idx.nVectors - 5000)).toBeLessThan(500);

@@ -1,19 +1,12 @@
 // Public model registry (§17.5) and the repo that downloads, caches and opens its files.
 import { AppError } from '../shared/errors';
-import type { DownloadItem, PublicId } from '../shared/types';
+import type { DownloadItem } from '../shared/types';
 import { readPth, type Pth } from '../formats/pth';
 import { blobChunks, download, readVerified, sha256Hex, type BlobStore } from './store';
 import { checkManifest, type Manifest } from './loader';
+import { checkRegistry, type PublicModel, type Registry } from './contract';
 
-export interface PublicModel { graph: string; weights: string; manifest: string }
-export interface Registry {
-  format: 1;
-  revision: string;
-  files: Record<string, { bytes: number; sha256: string }>;
-  models: { contentvec: PublicModel; rmvpe: PublicModel; 'uvr-hp-vocal': PublicModel & { params: string } };
-  rvcTemplates: Record<string, { id: string; graph: string; manifest: string }>;
-}
-export type { PublicId };
+export type { PublicId, PublicModel, Registry } from './contract';
 
 const LABELS: Record<string, string> = { contentvec: 'ContentVec (HuBERT)', rmvpe: 'RMVPE', 'uvr-hp-vocal': 'UVR VR (vocal)' };
 
@@ -21,14 +14,16 @@ const LABELS: Record<string, string> = { contentvec: 'ContentVec (HuBERT)', rmvp
 const bundled = Object.values(import.meta.glob<Registry>('./registry.gen.json', { eager: true, import: 'default' }))[0];
 
 export async function loadRegistry(baseUrl: string, f: typeof fetch = fetch): Promise<Registry> {
-  if (bundled) return bundled;
+  if (bundled) return checkRegistry(bundled);
+  let json: unknown;
   try {
     const r = await f(new URL('registry.json', baseUrl).href);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return (await r.json()) as Registry;
+    json = await r.json();
   } catch (e) {
     throw new AppError('NET_DOWNLOAD', 'cannot load model registry', String(e), true);
   }
+  return checkRegistry(json);
 }
 
 export interface Opened { graph: Uint8Array; manifest: Manifest; pth?: Pth; params?: unknown }
@@ -116,7 +111,6 @@ export class ModelRepo {
     if (!graphPath || !manPath) throw new AppError('INTERNAL', `unknown model ${id}`);
     const graph = new Uint8Array(await (await this.blob(graphPath)).arrayBuffer());
     const manifest = JSON.parse(await (await this.blob(manPath)).text()) as Manifest;
-    if (manifest.format !== 1) throw new AppError('CACHE_INTEGRITY', `manifest format ${manifest.format} for ${id}`);
     checkManifest(manifest);
     const pth = m ? await readPth(await this.blob(m.weights)).catch((e) => { throw new AppError('CACHE_INTEGRITY', `bad weights for ${id}`, String(e), true); }) : undefined;
     const params = m?.params ? JSON.parse(await (await this.blob(m.params)).text()) : undefined;

@@ -7,13 +7,14 @@ import { resample } from '../../dsp/resample';
 import { istft, stft, type Spec } from '../../dsp/stft';
 import { f32, runSession, type OrtSession } from '../../models/ort';
 import { yieldToLoop, type RunCtx } from '../ctx';
+import type { VrMeta } from '../../models/contract';
 
 export interface VrBand {
   sr: number; hl: number; n_fft: number; crop_start: number; crop_stop: number;
   lpf_start?: number; lpf_stop?: number; hpf_start?: number; hpf_stop?: number;
 }
 export interface VrBandParams { bins: number; band: Record<string, VrBand>; sr: number; pre_filter_start: number; pre_filter_stop: number }
-export interface VrMeta { window: number; offset: number; roi: number; bins: number; outputIs: 'instrumental' | 'vocal' }
+export type { VrMeta };
 
 export function checkVrParams(p: VrBandParams): void {
   const n = Object.keys(p.band ?? {}).length;

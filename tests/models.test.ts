@@ -75,7 +75,7 @@ function cosine(a: Float32Array, b: Float32Array, dim: number) {
     } finally { await releaseSession(s); }
   });
 
-  it('template synthesis (last chunk, reference rnd/noise) matches raw output', async () => {
+  it.skipIf(!existsSync(join(EXTERNAL, 'weight', 'rvc-kyubey.pth')))('template synthesis (last chunk, reference rnd/noise) matches raw output', async () => {
     const blob = await openAsBlob(join(EXTERNAL, 'weight', 'rvc-kyubey.pth'));
     const ckpt = await readRvcCheckpoint(blob);
     const info: RvcModelInfo = { id: 'k', name: 'kyubey', source: 'pth', version: 'v2', f0: true, sr: 40000, nSpk: ckpt.nSpk, bytes: blob.size };

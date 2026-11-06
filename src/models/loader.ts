@@ -3,21 +3,13 @@ import { AppError, type ErrorCode } from '../shared/errors';
 import type { Backend } from '../shared/types';
 import { numel, toFloat32, type Pth, type TensorRef } from '../formats/pth';
 import { createSession, type OrtSession } from './ort';
+import { MANIFEST_FORMAT, type Manifest } from './contract';
 
-export interface IoSpec { name: string; dtype: 'float32' | 'int64'; shape: (number | string)[] }
-export interface Manifest {
-  format: 1;
-  id: string;
-  externalData: 'weights.bin';
-  bytes: number;
-  tensors: { key: string; shape: number[]; offset: number }[];
-  inputs: IoSpec[];
-  outputs: IoSpec[];
-  meta: Record<string, unknown>;
-}
+export type { IoSpec, Manifest } from './contract';
 
 /** Validates the manifest shape rules tools promise (§17.2 rules 1-2). */
 export function checkManifest(m: Manifest, code: ErrorCode = 'CACHE_INTEGRITY'): void {
+  if (m.format !== MANIFEST_FORMAT) throw new AppError(code, `manifest ${m.id}: format ${m.format}`);
   let end = 0;
   for (const t of m.tensors) {
     if (t.offset !== end) throw new AppError(code, `manifest ${m.id}: tensor ${t.key} offset ${t.offset}, expected ${end}`);

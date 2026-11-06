@@ -7,6 +7,7 @@ import type { RvcCheckpoint } from '../../formats/rvc-checkpoint';
 import type { OnnxInfo } from '../../formats/onnx-meta';
 import { createSession, ort, releaseSession, runSession } from '../../models/ort';
 import { createSessionFromParts, type Manifest } from '../../models/loader';
+import { checkMeta } from '../../models/contract';
 import { featDim } from './features';
 
 export interface NetInput { phone: Float32Array; frames: number; pitch?: BigInt64Array; pitchf?: Float32Array; sid: number }
@@ -29,8 +30,6 @@ export function sinePhase(pitchf: Float32Array, upp: number, sr: number): Float3
   return out;
 }
 
-const upsampleOf = (sr: number) => (sr === 32000 ? 320 : sr === 48000 ? 480 : 400);
-
 /** Template session + the user's .pth weights; g = emb_g[sid] is gathered here (§0). */
 export async function createTemplateNet(
   info: RvcModelInfo, ckpt: RvcCheckpoint, template: { graph: Uint8Array; manifest: Manifest }, backend: Backend,
@@ -44,8 +43,8 @@ export async function createTemplateNet(
   toFloat32(emb.dtype, await ckpt.pth.read(emb), embAll);
   const { session, backend: used } = await createSessionFromParts(
     { graph: template.graph, manifest: template.manifest, pth: ckpt.pth, tensors: ckpt.weights }, backend, 'PTH_UNSUPPORTED_ARCH');
-  const upp = Number(template.manifest.meta.upp ?? upsampleOf(info.sr));
-  const tplSr = Number(template.manifest.meta.sr ?? info.sr);
+  const meta = checkMeta('template', template.manifest.meta);
+  const upp = meta.upp, tplSr = meta.sr;
   const hasPhase = template.manifest.inputs.some((x) => x.name === 'phase');
   return {
     info, backend: used,

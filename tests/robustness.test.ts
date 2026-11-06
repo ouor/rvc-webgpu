@@ -15,7 +15,7 @@ import { fakeFlatIndex, fakeRvcPth } from './helpers';
 
 const codeOf = async (f: () => Promise<unknown>) => {
   try { await f(); return 'OK'; } catch (e) {
-    if (!(e instanceof AppError)) throw new Error(`not an AppError: ${String(e)}`);
+    if (!(e instanceof AppError)) throw new Error(`not an AppError: ${String(e)}`, { cause: e });
     return e.code;
   }
 };

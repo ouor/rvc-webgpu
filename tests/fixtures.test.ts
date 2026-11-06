@@ -21,8 +21,11 @@ import { resample } from '../src/dsp/resample';
 
 const DIST = join(import.meta.dirname, '..', 'weights', 'dist');
 const KYUBEY = join(EXTERNAL, 'weight', 'rvc-kyubey.pth');
+const KYUBEY_INDEX = join(EXTERNAL, 'weight', 'rvc-kyubey.index');
 const fx = (name: string) => (hasFixture(name) ? it : it.skip);
-const fxModel = (name: string) => (hasFixture(name) && existsSync(join(DIST, 'registry.json')) ? it : it.skip);
+// Skips (not passes) when the fixture, weights/dist or a listed model file is missing (R1 L1).
+const fxModel = (name: string, ...files: string[]) =>
+  (hasFixture(name) && existsSync(join(DIST, 'registry.json')) && files.every((f) => existsSync(f)) ? it : it.skip);
 const manifestOf = (p: string) => JSON.parse(readFileSync(join(DIST, p + '.manifest.json'), 'utf8')) as Manifest;
 
 async function open(p: string): Promise<OrtSession> {
@@ -100,8 +103,7 @@ describe('fixtures: ONNX (WASM)', () => {
     } finally { await releaseSession(s); }
   });
 
-  for (const c of ['rvc-template-v2-f0-40k', 'rvc-template-v2-f0-40k-f0zero']) fxModel(c)(c, async () => {
-    if (!existsSync(KYUBEY)) return;
+  for (const c of ['rvc-template-v2-f0-40k', 'rvc-template-v2-f0-40k-f0zero']) fxModel(c, KYUBEY)(c, async () => {
     const f = loadFixture(c);
     const ckpt = await readRvcCheckpoint(await openAsBlob(KYUBEY));
     const info: RvcModelInfo = { id: 'k', name: 'k', source: 'pth', version: 'v2', f0: true, sr: 40000, nSpk: ckpt.nSpk, bytes: 0 };
@@ -156,10 +158,8 @@ describe('fixtures: ONNX (WASM)', () => {
     } finally { await releaseSession(s); }
   });
 
-  fxModel('pipeline-voice-20s')('voice pipeline 20 s (rmvpe + contentvec + index + synth)', async () => {
+  fxModel('pipeline-voice-20s', KYUBEY, KYUBEY_INDEX)('voice pipeline 20 s (rmvpe + contentvec + index + synth)', async () => {
     const f = loadFixture('pipeline-voice-20s');
-    const idxPath = join(EXTERNAL, 'weight', 'rvc-kyubey.index');
-    if (!existsSync(KYUBEY) || !existsSync(idxPath)) return;
     const cache = prepareConvert(f.inputs.vocal16k as Float32Array, 'normal');
     const rm = await open('rmvpe/rmvpe');
     try {
@@ -168,7 +168,7 @@ describe('fixtures: ONNX (WASM)', () => {
     const hu = await open('contentvec/contentvec');
     try { cache.feats.v2 = [await extractFeatures(cache.padded.slice(cache.chunks[0].start, cache.chunks[0].end), hu, 'v2')]; } finally { await releaseSession(hu); }
     expect(snrDb(cache.feats.v2[0].data, f.outputs.feats as Float32Array)).toBeGreaterThan(40);
-    const index = await readFaissIndex(await openAsBlob(idxPath));
+    const index = await readFaissIndex(await openAsBlob(KYUBEY_INDEX));
     expect(snrDb(searchIndex(cache.feats.v2[0], index).map((v, i) => v * 0.75 + 0.25 * cache.feats.v2![0].data[i]), f.outputs.featsIr75 as Float32Array)).toBeGreaterThan(40);
     const ckpt = await readRvcCheckpoint(await openAsBlob(KYUBEY));
     const info: RvcModelInfo = { id: 'k', name: 'k', source: 'pth', version: 'v2', f0: true, sr: 40000, nSpk: ckpt.nSpk, bytes: 0 };

@@ -33,4 +33,11 @@ export default tseslint.config(
   { files: ['src/engine/**', 'src/models/**'], rules: deny('**/app/**', '**/audio/**', 'react', 'react-dom') },
   { files: ['src/formats/**', 'src/dsp/**'], rules: deny('**/app/**', '**/audio/**', '**/engine/**', '**/models/**', 'onnxruntime-web*', 'react') },
   { files: ['src/shared/**'], rules: deny('**/app/**', '**/audio/**', '**/engine/**', '**/models/**', '**/formats/**', '**/dsp/**') },
+  // Rule 2: no DOM below the app; this code runs in the worker and in Node tests (review R3 A8).
+  {
+    files: ['src/{engine,models,formats,dsp,shared}/**'],
+    rules: {
+      'no-restricted-globals': ['error', ...['document', 'window', 'localStorage', 'sessionStorage'].map((name) => ({ name, message: 'no DOM in the engine layers (ARCHITECTURE §4)' }))],
+    },
+  },
 );
