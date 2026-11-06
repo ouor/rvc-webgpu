@@ -23,7 +23,8 @@ export function checkVrParams(p: VrBandParams): void {
 
 const SEG_SEC = 60, OVERLAP_SEC = 4; // §9.2-5: segment memory independent of song length
 // WebGPU batches patches; ORT WASM throws a bare C++ exception on B>1 patches here (and gains nothing on CPU).
-const batchFor = (b: RunCtx['backend']) => (b === 'webgpu' ? 4 : 1);
+// QA B2: B=4 peaked at 18.7 GB VRAM. Every call has the same shape (the last batch is zero-padded) so ORT reuses buffers.
+const batchFor = (b: RunCtx['backend']) => (b === 'webgpu' ? 2 : 1);
 
 /** Complex [2 ch][rows][frames] spectrogram. */
 interface CSpec { rows: number; frames: number; re: Float32Array[]; im: Float32Array[] }
@@ -104,7 +105,7 @@ async function predictMask(X: CSpec, coef: number, net: OrtSession, meta: VrMeta
   for (let w0 = 0; w0 < nWin; w0 += BATCH) {
     ctx.throwIfCancelled();
     const B = Math.min(BATCH, nWin - w0);
-    const x = new Float32Array(B * 2 * rows * W);
+    const x = new Float32Array(BATCH * 2 * rows * W); // patches B..BATCH-1 stay zero
     for (let b = 0; b < B; b++) {
       const start = (w0 + b) * roi - padL; // first input frame of this patch in unpadded coordinates
       for (let c = 0; c < 2; c++) for (let k = 0; k < rows; k++) {
@@ -112,7 +113,7 @@ async function predictMask(X: CSpec, coef: number, net: OrtSession, meta: VrMeta
         for (let t = Math.max(0, -start); t < W && start + t < frames; t++) x[dst + t] = Math.hypot(X.re[c][src + start + t], X.im[c][src + start + t]) / coef;
       }
     }
-    const r = await runSession(net, { [net.inputNames[0]]: f32(x, [B, 2, rows, W]) });
+    const r = await runSession(net, { [net.inputNames[0]]: f32(x, [BATCH, 2, rows, W]) });
     const m = r[outName].data as Float32Array; // [B, 2, rows, roi]
     for (let b = 0; b < B; b++) {
       const t0 = (w0 + b) * roi;
@@ -261,12 +262,16 @@ export async function separateVR(
   let done = 0;
   for (let k = 0; k < segs.length; k++) {
     const [s, e] = segs[k];
+    ctx.throwIfCancelled();
     const A = analyze(audio.l.subarray(s, e), audio.r.subarray(s, e), mp);
     const mask = await predictMask(A.X, coef, net, meta, ctx, () => ctx.progress(++done, Math.max(done, totalPatches)));
     applyAggressiveness(mask, A.X.rows, A.X.frames, opts.aggressiveness, mp.band[1].crop_stop);
     const { inst, voc } = stems(A.X, mask, meta.outputIs);
-    const wav = (spec: CSpec) => { const he = mirroring(spec, A.highEnd, mp); return [toWave(spec, 0, mp, he), toWave(spec, 1, mp, he)]; };
-    const [il, ir] = wav(inst), [vl, vr] = wav(voc);
+    // QA B5: the inverse transforms run ~1 s each per segment; check cancel between them
+    const step = async <T>(f: () => T) => { await yieldToLoop(); ctx.throwIfCancelled(); return f(); };
+    const heI = mirroring(inst, A.highEnd, mp), heV = mirroring(voc, A.highEnd, mp);
+    const il = await step(() => toWave(inst, 0, mp, heI)), ir = await step(() => toWave(inst, 1, mp, heI));
+    const vl = await step(() => toWave(voc, 0, mp, heV)), vr = await step(() => toWave(voc, 1, mp, heV));
     // linear crossfade over the overlap: rising here + falling in the previous segment sums to 1
     const fadeIn = k > 0 ? ov : 0;
     const fadeOut = k < segs.length - 1 ? ov : 0;
