@@ -26,6 +26,7 @@ const decimals = (step: number) => (String(step).split('.')[1] ?? '').length;
 
 interface SliderFieldProps {
   label: ReactNode;
+  name?: string; // accessible name when label is not a plain string
   help?: string;
   value: number;
   onChange: (v: number) => void;
@@ -93,8 +94,8 @@ export function SliderField(p: SliderFieldProps) {
         step={p.step}
         disabled={p.disabled}
         onValueChange={([v]) => p.onChange(+v.toFixed(decimals(p.step)))}
-        aria-label={typeof p.label === 'string' ? p.label : undefined}
-        aria-valuetext={p.valueText?.(p.value)}
+        aria-label={p.name ?? (typeof p.label === 'string' ? p.label : undefined)}
+        aria-valuetext={p.valueText?.(p.value) ?? `${fmt(p.value)}${p.unit ? ` ${p.unit}` : ''}`}
         className="py-2"
       />
       {p.chips && !p.disabled && (
