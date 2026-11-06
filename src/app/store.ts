@@ -61,6 +61,7 @@ export interface Model {
 
 export interface IndexState {
   status: 'parsing' | 'ready' | 'error';
+  origin: 'user' | 'bundled'; // bundled = came with the zip / saved model and goes away with it
   fileName: string;
   id?: string; // set for a loaded index (also from a zip or a saved model)
   info?: IndexInfo;
@@ -136,6 +137,7 @@ export interface State {
   settingsTab?: SettingsTab;
   confirm?: Confirm;
   myModelsVersion: number;
+  resolvedTheme: 'light' | 'dark'; // what the .dark class currently says (theme may be 'system')
 }
 
 export const useApp = create<State>()(
@@ -152,6 +154,7 @@ export const useApp = create<State>()(
       format: 'pcm16',
       view: 'work',
       myModelsVersion: 0,
+      resolvedTheme: 'light',
     }),
     {
       name: 'web-rvc:ui',
@@ -170,6 +173,7 @@ export const set = useApp.setState;
 export const get = useApp.getState;
 
 export function confirmAsync(c: Omit<Confirm, 'resolve'>): Promise<boolean> {
+  get().confirm?.resolve(false); // a newer dialog replaces an open one; its caller must not wait forever
   return new Promise((resolve) => set({ confirm: { ...c, resolve } }));
 }
 

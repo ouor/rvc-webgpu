@@ -16,7 +16,11 @@ function useTheme() {
   const lang = useApp((s) => s.settings.lang);
   useEffect(() => {
     const mq = matchMedia('(prefers-color-scheme: dark)');
-    const apply = () => document.documentElement.classList.toggle('dark', theme === 'dark' || (theme === 'system' && mq.matches));
+    const apply = () => {
+      const dark = theme === 'dark' || (theme === 'system' && mq.matches);
+      document.documentElement.classList.toggle('dark', dark);
+      set({ resolvedTheme: dark ? 'dark' : 'light' }); // after the class flips, so waveforms read the new colours
+    };
     apply();
     mq.addEventListener('change', apply);
     return () => mq.removeEventListener('change', apply);

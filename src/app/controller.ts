@@ -5,7 +5,7 @@ import { decodeFile, peaks, toAudioBuffer } from '@/audio/decode';
 import { renderMix } from '@/audio/mixer';
 import { encodeAudio } from '@/audio/wav';
 import { toAppError } from '@/shared/errors';
-import { DEFAULT_CONVERT, type JobSpec, type Progress, type Stereo } from '@/shared/types';
+import { DEFAULT_CONVERT, type JobSpec, type Progress, type RvcModelInfo, type Stereo } from '@/shared/types';
 import { AUDIO_EXT, INDEX_EXT, MODEL_EXT, download, extOf, safe, stripExt, fmtSigned, type RunStage } from './lib/format';
 import { confirmAsync, get, isBusy, set, type Job, type Options, type Result, type Step, type StepInfo } from './store';
 import { t } from './i18n';
@@ -40,6 +40,10 @@ addEventListener('pagehide', () => setRunningFlag(false));
 
 export const dismiss = (id: string) => set({ dismissed: [...get().dismissed, id] });
 
+// Stale async results: each call takes a ticket; only the newest ticket per slot may write back.
+const tickets: Record<'song' | 'model' | 'index' | 'plan', number> = { song: 0, model: 0, index: 0, plan: 0 };
+const latest = (slot: keyof typeof tickets) => { const my = ++tickets[slot]; return () => tickets[slot] === my; };
+
 // ---------- files ----------
 
 /** Routes dropped/picked files by extension (DESIGN Dropzone: whole-page drop allowed). */
@@ -70,76 +74,89 @@ async function guardReplace() {
 }
 
 export async function setSong(file: File) {
+  const current = latest('song');
   set({ song: { status: 'parsing', name: file.name, size: file.size }, view: 'work', result: undefined, prev: undefined, stems: undefined, opts: { ...get().opts, range: undefined } });
   try {
     const dec = await decodeFile(file);
     const pk = peaks(dec.audio.l, 1200);
     const inputId = await engine.setInput(dec.audio, { name: file.name, size: file.size, lastModified: file.lastModified });
-    if (get().song?.name !== file.name) return; // replaced meanwhile
+    if (!current()) return; // replaced meanwhile
     set({ song: { status: 'ready', name: file.name, size: file.size, duration: dec.duration, channels: dec.originalChannels, peaks: pk, buffer: dec.buffer, inputId } });
     toast(t('toast.songLoaded', { name: stripExt(file.name) }));
-    void readSourceRate(file);
+    void readSourceRate(file, current);
     void refreshPlan();
   } catch (e) {
-    set({ song: { status: 'error', name: file.name, size: file.size, error: toAppError(e, 'AUDIO_DECODE') } });
+    if (current()) set({ song: { status: 'error', name: file.name, size: file.size, error: toAppError(e, 'AUDIO_DECODE') } });
   }
 }
 
 /** IN-2: the original sample rate (decodeAudioData resamples to 44.1k, so read it from the container). */
-async function readSourceRate(file: File) {
+async function readSourceRate(file: File, current: () => boolean) {
   try {
     const mb = await import('mediabunny');
     const input = new mb.Input({ source: new mb.BlobSource(file), formats: mb.ALL_FORMATS });
     const track = await input.getPrimaryAudioTrack();
     const s = get().song;
-    if (track && s?.name === file.name) set({ song: { ...s, sourceRate: track.sampleRate } });
+    if (track && s && current()) set({ song: { ...s, sourceRate: track.sampleRate } });
   } catch { /* metadata is optional */ }
 }
 
-export const clearSong = () => set({ song: undefined, plan: undefined, result: undefined, prev: undefined, stems: undefined, view: 'work' });
+export const clearSong = () => { latest('song'); set({ song: undefined, plan: undefined, result: undefined, prev: undefined, stems: undefined, view: 'work' }); };
+
+/** A model brings its own index (zip / saved model) or none; a bundled index never outlives its model, a user-added one stays. */
+function applyModelIndex(info: RvcModelInfo, fileName: string) {
+  if (info.indexId) { latest('index'); set({ index: { status: 'ready', origin: 'bundled', fileName, id: info.indexId, info: info.index } }); }
+  else if (get().index?.origin === 'bundled') { latest('index'); set({ index: undefined }); }
+}
 
 export async function setModel(file: File) {
+  const current = latest('model');
   set({ model: { status: 'parsing', fileName: file.name, fromZip: extOf(file.name) === 'zip' }, plan: undefined });
   try {
     const info = await engine.loadRvcModel(file);
-    if (get().model?.fileName !== file.name) return;
+    if (!current()) return;
     set({ model: { status: 'ready', fileName: file.name, fromZip: extOf(file.name) === 'zip', info } });
-    if (info.indexId) set({ index: { status: 'ready', fileName: file.name, id: info.indexId, info: info.index } });
-    else if (get().index?.fileName === get().model?.fileName) set({ index: undefined });
+    applyModelIndex(info, file.name);
     setOpts({ sid: 0 }); // speaker ids are per model
     toast(t('toast.modelLoaded', { name: info.name, v: info.version, sr: `${info.sr / 1000}kHz` }) + (info.indexId ? ` · ${t('toast.zipIndex')}` : ''));
     void refreshPlan();
   } catch (e) {
-    set({ model: { status: 'error', fileName: file.name, error: toAppError(e) } });
+    if (current()) set({ model: { status: 'error', fileName: file.name, error: toAppError(e) } });
   }
 }
 
 export async function openMyModel(id: string) {
   if (!(await guardReplace())) return;
+  const current = latest('model');
   set({ model: { status: 'parsing', fileName: id, fromMine: true }, settingsTab: undefined });
   try {
     const info = await engine.myModels.open(id);
-    set({ model: { status: 'ready', fileName: info.name, fromMine: true, info, saved: true }, index: info.indexId ? { status: 'ready', fileName: info.name, id: info.indexId, info: info.index } : undefined, myModelsVersion: get().myModelsVersion + 1 });
+    if (!current()) return;
+    set({ model: { status: 'ready', fileName: info.name, fromMine: true, info, saved: true }, myModelsVersion: get().myModelsVersion + 1 });
+    applyModelIndex(info, info.name);
+    setOpts({ sid: 0 });
     void refreshPlan();
   } catch (e) {
-    set({ model: { status: 'error', fileName: id, error: toAppError(e) } });
+    if (current()) set({ model: { status: 'error', fileName: id, error: toAppError(e) } });
   }
 }
 
-export const clearModel = () => set({ model: undefined, index: undefined, plan: undefined });
+export const clearModel = () => { latest('model'); latest('index'); set({ model: undefined, index: undefined, plan: undefined }); };
 
 export async function setIndex(file: File) {
-  set({ index: { status: 'parsing', fileName: file.name } });
+  const current = latest('index');
+  set({ index: { status: 'parsing', origin: 'user', fileName: file.name } });
   try {
     const info = await engine.loadIndex(file);
-    set({ index: { status: 'ready', fileName: file.name, id: info.id, info } });
+    if (!current()) return;
+    set({ index: { status: 'ready', origin: 'user', fileName: file.name, id: info.id, info } });
     if (get().model?.saved) void saveMine(true);
   } catch (e) {
-    set({ index: { status: 'error', fileName: file.name, error: toAppError(e) } });
+    if (current()) set({ index: { status: 'error', origin: 'user', fileName: file.name, error: toAppError(e) } });
   }
 }
 
-export const clearIndex = () => set({ index: undefined });
+export const clearIndex = () => { latest('index'); set({ index: undefined }); };
 
 export async function setOnnxSr(sr: 32000 | 40000 | 48000) {
   const m = get().model;
@@ -165,7 +182,7 @@ export async function saveMine(on: boolean) {
 export async function removeMine(id: string, name: string) {
   const ok = await confirmAsync({ title: t('confirm.delModelTitle', { name }), body: t('confirm.delModelBody'), action: t('common.delete'), destructive: true });
   if (!ok) return;
-  await engine.myModels.remove(id);
+  try { await engine.myModels.remove(id); } catch (e) { toast.error(t('toast.deleteFailed'), { description: toAppError(e).message }); }
   const m = get().model;
   if (m?.info?.id === id) set({ model: { ...m, saved: false } });
   set({ myModelsVersion: get().myModelsVersion + 1 });
@@ -200,9 +217,10 @@ export function buildJob(profile: 'normal' | 'low' = get().crashed ? 'low' : 'no
 }
 
 export async function refreshPlan() {
+  const current = latest('plan');
   const job = buildJob();
   if (!job || !get().engineReady) return set({ plan: undefined });
-  try { set({ plan: await engine.plan(job) }); } catch { set({ plan: undefined }); }
+  try { const plan = await engine.plan(job); if (current()) set({ plan }); } catch { if (current()) set({ plan: undefined }); }
 }
 
 // ---------- start: plan -> (download) -> run ----------
@@ -228,14 +246,14 @@ export async function startDownload(retry = false) {
   const dl = get().dl;
   if (!dl) return;
   if (!navigator.onLine) return set({ dl: { ...dl, status: 'offline' } });
-  let items = dl.items;
-  if (retry) {
-    const job = buildJob(pending?.profile);
-    if (job) items = (await engine.plan(job)).filter((d) => !d.cached);
-  }
-  const total = items.reduce((a, d) => a + d.bytes, 0);
-  set({ dl: { ...dl, status: 'loading', items, done: 0, total, got: {}, cur: undefined, startedAt: performance.now(), error: undefined } });
   try {
+    let items = dl.items;
+    if (retry) {
+      const job = buildJob(pending?.profile);
+      if (job) items = (await engine.plan(job)).filter((d) => !d.cached);
+    }
+    const total = items.reduce((a, d) => a + d.bytes, 0);
+    set({ dl: { ...dl, status: 'loading', items, done: 0, total, got: {}, cur: undefined, startedAt: performance.now(), error: undefined } });
     await engine.download(items.map((d) => d.id), (p: Progress) => {
       const cur = get().dl;
       if (cur) set({ dl: { ...cur, done: p.done, total: p.total || total, ...(p.item && { cur: p.item, got: { ...cur.got, [p.item]: p.itemDone ?? 0 } }) } });
@@ -303,6 +321,7 @@ async function run(rerun: boolean, profile: 'normal' | 'low') {
   const onProgress = (p: Progress) => {
     if (p.stage === 'download') return;
     const k = p.stage as RunStage;
+    if (!get().job) return; // late event after cancel
     finishOthers(k);
     const cur = get().job!.steps[k];
     if (p.reused) patchStep(k, { state: 'reused' });
@@ -311,7 +330,8 @@ async function run(rerun: boolean, profile: 'normal' | 'low') {
       const done = p.total > 0 && p.done >= p.total;
       patchStep(k, { state: done ? 'done' : 'run', done: p.done, total: p.total, startedAt: cur.startedAt ?? now(), ms: done ? now() - (cur.startedAt ?? now()) : undefined });
     }
-    if (p.backend === 'wasm' && get().env?.backend === 'webgpu' && !get().job!.fallback) set({ job: { ...get().job!, fallback: true } });
+    const j = get().job;
+    if (j && p.backend === 'wasm' && get().env?.backend === 'webgpu' && !j.fallback) set({ job: { ...j, fallback: true } });
     // DESIGN S3: separated stems are playable while conversion continues.
     if (job.mode === 'song' && k !== 'separate' && !stemsAsked) {
       stemsAsked = true;
@@ -365,6 +385,7 @@ export async function recover(action: 'retry' | 'low' | 'wasm' | 'noIndex') {
   if (action === 'noIndex') clearIndex();
   if (action === 'wasm') {
     set({ settings: { ...get().settings, backend: 'wasm' } });
+    toast(t('toast.wasmKept'), { action: { label: t('settings.title'), onClick: () => set({ settingsTab: 'general' }) } });
     await initEngine();
   }
   await start({ rerun, profile: action === 'low' ? 'low' : undefined });
@@ -427,8 +448,8 @@ export async function exportSeparated() {
     st = { vocals: toAudioBuffer(x.vocals), inst: toAudioBuffer(x.instrumental) };
     set({ stems: st });
   }
-  await exportStem('vocals', undefined);
-  await exportStem('inst', undefined);
+  await exportStem('vocals');
+  await exportStem('inst');
 }
 
 // ---------- storage ----------
@@ -436,7 +457,7 @@ export async function exportSeparated() {
 export async function clearCache() {
   const ok = await confirmAsync({ title: t('confirm.clearTitle'), body: t('confirm.clearBody'), action: t('confirm.clearAction'), destructive: true });
   if (!ok) return false;
-  await engine.cache.clear();
+  try { await engine.cache.clear(); } catch (e) { toast.error(t('toast.deleteFailed'), { description: toAppError(e).message }); }
   void refreshPlan();
   return true;
 }
@@ -471,14 +492,14 @@ export async function importCache(files: File[]) {
 }
 
 export async function renameMine(id: string, name: string) {
-  await engine.myModels.rename(id, name);
+  try { await engine.myModels.rename(id, name); } catch (e) { return void toast.error(t('toast.renameFailed'), { description: toAppError(e).message }); }
   const m = get().model;
   if (m?.info?.id === id) set({ model: { ...m, info: { ...m.info, name } } });
   set({ myModelsVersion: get().myModelsVersion + 1 });
 }
 
 export async function removeCacheItem(id: string) {
-  await engine.cache.remove(id);
+  try { await engine.cache.remove(id); } catch (e) { toast.error(t('toast.deleteFailed'), { description: toAppError(e).message }); }
   void refreshPlan();
 }
 

@@ -1,5 +1,6 @@
 // ActionBar (S1 bottom), S2 public-model download dialog, S3 progress panel.
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
+import { useNow } from '../lib/hooks';
 import { Activity, Boxes, Brain, Circle, CircleCheck, CircleDashed, CircleMinus, CircleX, Download as DownloadIcon, Info, Loader2, Lock, Recycle, Split, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
@@ -120,8 +121,7 @@ export function DownloadDialog() {
   const t = useT();
   const dl = useApp((s) => s.dl);
   const env = useApp((s) => s.env);
-  const [now, setNow] = useState(() => performance.now());
-  useEffect(() => { if (dl?.status !== 'loading') return; const id = setInterval(() => setNow(performance.now()), 1000); return () => clearInterval(id); }, [dl?.status]);
+  const now = useNow(dl?.status === 'loading');
   if (!dl) return null;
   const close = (o: boolean) => { if (o) return; if (dl.status === 'loading') set({ dl: { ...dl, open: false } }); else set({ dl: undefined }); };
   const rows = dl.items.map((item) => {
@@ -252,8 +252,7 @@ export function ProgressPanel() {
   const job = useApp((s) => s.job);
   const env = useApp((s) => s.env);
   const result = useApp((s) => s.result);
-  const [now, setNow] = useState(() => performance.now());
-  useEffect(() => { if (job?.status === 'error' || !job) return; const id = setInterval(() => setNow(performance.now()), 1000); return () => clearInterval(id); }, [job?.status, job]);
+  const now = useNow(!!job && job.status !== 'error');
   if (!job) return null;
   const steps = STEP_ORDER.filter((k) => job.steps[k].state !== 'skipped');
   const curIdx = job.current ? steps.indexOf(job.current) : 0;

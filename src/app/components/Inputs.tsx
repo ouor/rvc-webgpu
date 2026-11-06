@@ -9,14 +9,12 @@ import { HelpTip, Segmented, StepCard } from './Field';
 import { InlineError, NoticeButton } from './Notice';
 import { AudioPlayer, usePlayer } from './Player';
 import type { SavedModel } from '@/shared/types';
-import { fmtBytes, fmtHz, fmtTime } from '../lib/format';
+import { AUDIO_ACCEPT, INDEX_ACCEPT, MODEL_ACCEPT, fmtBytes, fmtHz, fmtTime } from '../lib/format';
 import { cn } from '../lib/utils';
 import { clearIndex, clearModel, clearSong, engine, openMyModel, saveMine, setOnnxSr, setOpts } from '../controller';
 import { selBusy, set, useApp } from '../store';
 import { useT } from '../i18n';
 
-const AUDIO_ACCEPT = 'audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac';
-const MODEL_ACCEPT = '.pth,.onnx,.zip,.index';
 
 const iconBtn = 'grid place-items-center size-8 rounded-lg hover:bg-card text-muted-foreground hover:text-foreground';
 
@@ -130,7 +128,7 @@ function IndexRow() {
   if (index?.status === 'error') {
     return (
       <InlineError className="mt-3" tone="warning" error={index.error} file={index.fileName}
-        actions={<><NoticeButton onClick={() => pickFiles('.index')}>{t('index.other')}</NoticeButton><NoticeButton onClick={clearIndex}>{t('index.without')}</NoticeButton></>} />
+        actions={<><NoticeButton onClick={() => pickFiles(INDEX_ACCEPT)}>{t('index.other')}</NoticeButton><NoticeButton onClick={clearIndex}>{t('index.without')}</NoticeButton></>} />
     );
   }
   return (
@@ -138,7 +136,7 @@ function IndexRow() {
       {!index ? <>
         <span className="size-4 rounded-full border-2 border-dashed border-muted-foreground/50 shrink-0" />
         <span className="flex-1 text-muted-foreground">{t('index.none')}</span>
-        {!busy && <button type="button" className="text-small font-semibold text-primary" onClick={() => pickFiles('.index')}>{t('index.add')}</button>}
+        {!busy && <button type="button" className="text-small font-semibold text-primary" onClick={() => pickFiles(INDEX_ACCEPT)}>{t('index.add')}</button>}
       </> : index.status === 'parsing' ? <>
         <Loader2 className="size-4 animate-spin text-primary shrink-0" /><span className="flex-1 truncate">{t('index.parsing')}</span>
       </> : <>

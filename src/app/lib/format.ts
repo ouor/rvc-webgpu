@@ -41,6 +41,10 @@ export const extOf = (name: string) => (/\.([^.]+)$/.exec(name)?.[1] ?? '').toLo
 export const AUDIO_EXT = ['mp3', 'wav', 'flac', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'mp4', 'webm'];
 export const MODEL_EXT = ['pth', 'onnx', 'zip'];
 export const INDEX_EXT = ['index'];
+const accept = (ext: string[]) => ext.map((e) => `.${e}`).join(',');
+export const AUDIO_ACCEPT = `audio/*,${accept(AUDIO_EXT)}`;
+export const MODEL_ACCEPT = accept([...MODEL_EXT, ...INDEX_EXT]);
+export const INDEX_ACCEPT = accept(INDEX_EXT);
 
 export function download(blob: Blob, name: string) {
   const a = document.createElement('a');

@@ -67,7 +67,7 @@ export function Waveform({ peaks, duration, color, height, player, region, onReg
   const box = useRef<HTMLDivElement>(null);
   const ws = useRef<WaveSurfer>(undefined);
   const regions = useRef<ReturnType<typeof RegionsPlugin.create>>(undefined);
-  const theme = useApp((s) => s.settings.theme);
+  const theme = useApp((s) => s.resolvedTheme);
   const onRegionRef = useRef(onRegion);
   useEffect(() => { onRegionRef.current = onRegion; });
   const [pos, setPos] = useState(0);
