@@ -178,7 +178,7 @@ function ModelInfoCard() {
         <div className="mt-3 rounded-lg bg-warning-soft p-3">
           <p className="text-small font-semibold">{t('err.ONNX_NEED_SR.title')}</p>
           <p className="text-caption text-muted-foreground mt-0.5 mb-2">{t('err.ONNX_NEED_SR.body')}</p>
-          <Segmented label={t('err.ONNX_NEED_SR.title')} value={'' as string} onChange={(v) => void setOnnxSr(Number(v) as 32000 | 40000 | 48000)}
+          <Segmented label={t('err.ONNX_NEED_SR.title')} value={undefined} onChange={(v) => void setOnnxSr(Number(v) as 32000 | 40000 | 48000)}
             items={[{ value: '32000', label: '32kHz' }, { value: '40000', label: '40kHz' }, { value: '48000', label: '48kHz' }]} />
         </div>
       )}

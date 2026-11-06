@@ -109,7 +109,8 @@ const isMobile = () => matchMedia('(max-width: 767px)').matches || (/Android|iPh
 export function MobileGate() {
   const t = useT();
   const [go, setGo] = useState(() => { try { return sessionStorage.getItem('web-rvc:mobile-ok') === '1'; } catch { return false; } });
-  if (go || !isMobile()) return null;
+  const [mobile] = useState(isMobile); // decided once on load; resizing later does not bring the gate back
+  if (go || !mobile) return null;
   return (
     <div className="fixed inset-0 z-50 bg-background grid place-items-center p-6">
       <div className="max-w-[360px] w-full text-center">

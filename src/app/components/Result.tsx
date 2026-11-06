@@ -57,6 +57,7 @@ function Hero({ result, cur }: { result: Result; cur: Result }) {
         )}
       </div>
       <div className="mt-5">
+        {/* The mix waveform is drawn from the instrumental (song) as an approximation; rendering the real mix for peaks is not worth it. */}
         <AudioPlayer player={player} peaks={bufferPeaks(cur.inst ?? cur.converted, 1600)} duration={player.duration} color={song ? 'stem-mix' : 'stem-vocal'} height={80} size="lg" label={song ? t('stem.mix') : t('stem.converted')} />
       </div>
       {song && <>

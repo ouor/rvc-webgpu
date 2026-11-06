@@ -114,7 +114,7 @@ export function SliderField(p: SliderFieldProps) {
 }
 
 interface SegmentedProps<T extends string> {
-  value: T;
+  value: T | undefined; // undefined = nothing chosen yet
   onChange: (v: T) => void;
   items: { value: T; label: ReactNode; disabled?: boolean }[];
   label: string;
@@ -125,7 +125,7 @@ interface SegmentedProps<T extends string> {
 /** DESIGN SegmentedControl: ToggleGroup(type=single), arrow keys move. */
 export function Segmented<T extends string>({ value, onChange, items, label, size = 'sm', className }: SegmentedProps<T>) {
   return (
-    <TG.Root type="single" value={value} onValueChange={(v) => v && onChange(v as T)} aria-label={label}
+    <TG.Root type="single" value={value ?? ''} onValueChange={(v) => v && onChange(v as T)} aria-label={label}
       className={cn('inline-grid grid-flow-col auto-cols-fr p-1 rounded-xl bg-muted', size === 'sm' && 'p-0.5 rounded-lg', className)}>
       {items.map((it) => (
         <TG.Item key={it.value} value={it.value} disabled={it.disabled}

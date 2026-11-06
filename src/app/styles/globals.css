@@ -80,6 +80,7 @@
 }
 
 /* Tailwind mapping of the tokens (mockups/assets/app.js tailwind.config, v4 syntax). */
+/* Adding a font-size token here? Add it to the font-size group in lib/utils.ts (cn) too. */
 @theme inline {
   --font-sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
   --color-background: hsl(var(--background));

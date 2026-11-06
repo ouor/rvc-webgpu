@@ -8,7 +8,7 @@ import { ActionBar, DownloadDialog, ProgressPanel } from './components/Run';
 import { ResultView } from './components/Result';
 import { SettingsDialog } from './components/Settings';
 import { ConfirmDialog } from './components/ConfirmDialog';
-import { addFiles, detectCrash, initEngine, setOnline, setResolvedTheme } from './controller';
+import { addFiles, setOnline, setResolvedTheme } from './controller';
 import { cn } from './lib/utils';
 import { selBusy, useApp } from './store';
 
@@ -44,8 +44,6 @@ function Work() {
   );
 }
 
-let started = false;
-
 export function App() {
   useTheme();
   const view = useApp((s) => s.view);
@@ -53,7 +51,6 @@ export function App() {
   const hasResult = useApp((s) => !!s.result);
 
   useEffect(() => {
-    if (!started) { started = true; detectCrash(); void initEngine(); } // StrictMode runs effects twice
     addEventListener('online', setOnline);
     addEventListener('offline', setOnline);
     // Whole-page drop: files are routed to the right card by extension.

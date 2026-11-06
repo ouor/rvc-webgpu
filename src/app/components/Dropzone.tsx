@@ -1,4 +1,5 @@
 // DESIGN Dropzone: click/Enter/Space opens the picker; dropped files are routed by extension (addFiles).
+// File input has three entry points, all ending in addFiles: this dropzone, pickFiles() below, and the whole-page drop in App.
 import type { ReactNode } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Bar } from './Bar';
