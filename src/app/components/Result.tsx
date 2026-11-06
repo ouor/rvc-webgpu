@@ -1,9 +1,9 @@
 // S4 result (DESIGN 9.9, 9.11, 9.12): A/B on top, player + mixer (S/M), files by purpose, rerun panel (F2).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, CircleCheck, Download as DownloadIcon, Info, Loader2, Recycle, Share2, TriangleAlert, X } from 'lucide-react';
+import { ArrowLeft, CircleCheck, Download as DownloadIcon, FileArchive, Info, Loader2, Recycle, Share2, TriangleAlert, X } from 'lucide-react';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
-import { HelpTip, SliderField } from './Field';
+import { HelpTip, SliderField, SwitchRow } from './Field';
 import { OptionsFields } from './Options';
 import { AudioPlayer, PlayButton, Waveform, bufferPeaks, seek, toggle, usePlayer } from './Player';
 import { DEFAULT_MIX } from '@/audio/mixer';
@@ -11,7 +11,7 @@ import type { AudioFormat } from '@/audio/wav';
 import { abLabel, changedKeys, effectiveMix, estimateRun, fmtBytes, fmtEta, fmtSigned, fmtTime, fmtWhen, formatChanges, type RunStage, type StemKind } from '../lib/format';
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '../lib/utils';
-import { MP3_BITRATE, backToWork, exportStem, fileName, setAB, setFormat, setMix, shareMix, start, startFromRecent, toggleMute, toggleSolo } from '../controller';
+import { MP3_BITRATE, backToWork, exportAll, exportStem, setAlign, fileName, setAB, setFormat, setMix, shareMix, start, startFromRecent, toggleMute, toggleSolo } from '../controller';
 import { selBusy, selEngineBusy, selCurrentResult, useApp, type Options, type Result } from '../store';
 import { useT, type T } from '../i18n';
 
@@ -155,7 +155,7 @@ const canShareFiles = () => { try { return !!navigator.canShare?.({ files: [new 
 
 function StemRow({ cur, kind, buffer, color, title, primary, tag }: { cur: Result; kind: StemKind; buffer: AudioBuffer; color: string; title: string; primary?: boolean; tag?: string }) {
   const t = useT();
-  const { format, mix, mute } = useApp(useShallow((s) => ({ format: s.format, mix: s.mix, mute: s.mute })));
+  const { format, mix, mute, align } = useApp(useShallow((s) => ({ format: s.format, mix: s.mix, mute: s.mute, align: s.align })));
   const live = useMemo(() => effectiveMix(mix, mute), [mix, mute]);
   // The mix row plays the mix as it will be saved (mute, no solo); other rows play their stem alone.
   const stems = useMemo(() => (kind === 'mix' ? { vocal: cur.converted, inst: cur.inst } : { vocal: buffer }), [kind, cur, buffer]);
@@ -177,7 +177,7 @@ function StemRow({ cur, kind, buffer, color, title, primary, tag }: { cur: Resul
         <p className="text-caption text-muted-foreground truncate" title={name}>{name}</p>
       </div>
       <div className="flex-1 min-w-0 hidden md:block"><Waveform peaks={bufferPeaks(buffer, 400)} duration={buffer.duration} color={color} height={32} /></div>
-      <span className="text-caption text-muted-foreground tnum w-14 text-right">{fmtBytes(fileBytes(buffer.duration, format))}</span>
+      <span className="text-caption text-muted-foreground tnum w-14 text-right">{fmtBytes(fileBytes(align && cur.opts.range && cur.sourceSeconds ? cur.sourceSeconds : buffer.duration, format))}</span>
       {share && (
         <Button variant="secondary" size="icon-sm" aria-label={t('res.share')} title={t('res.share')} disabled={!!busy} onClick={() => void run('share')}>
           {busy === 'share' ? <Loader2 className="animate-spin" /> : <Share2 />}
@@ -223,13 +223,26 @@ function FormatPicker({ seconds, voice }: { seconds: number; voice: boolean }) {
 function Files({ cur }: { cur: Result }) {
   const t = useT();
   const song = cur.mode !== 'voice';
+  const { format, align } = useApp(useShallow((s) => ({ format: s.format, align: s.align })));
+  const [zipping, setZipping] = useState(false);
   const seconds = (cur.inst ?? cur.converted).duration;
+  const files = 1 + (cur.vocals ? 1 : 0) + (cur.inst ? 2 : 0);
+  const zipSize = fileBytes(align && cur.opts.range && cur.sourceSeconds ? cur.sourceSeconds : seconds, format) * files;
+  const zip = async () => { setZipping(true); try { await exportAll(cur); } finally { setZipping(false); } };
   return (
     <section className="rounded-2xl bg-card shadow-card p-6">
-      <h2 className="text-h2">{t('res.files')}</h2>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h2 className="text-h2">{t('res.files')}</h2>
+        {files > 1 && (
+          <Button variant="secondary" size="sm" disabled={zipping} onClick={() => void zip()}>
+            {zipping ? <><Loader2 className="animate-spin" />{t('res.zipping')}</> : <><FileArchive />{t('res.zip')} <span className="font-normal text-muted-foreground tnum">· {t('dl.about', { size: fmtBytes(zipSize) })}</span></>}
+          </Button>
+        )}
+      </div>
       <FormatPicker seconds={seconds} voice={!song} />
       <SaveLine r={cur} />
       {song && <p className="mt-3 flex items-center gap-2 text-small"><Info className="size-4 shrink-0 text-accent-foreground" />{t('res.mixNote')}</p>}
+      {cur.opts.range && <div className="mt-3"><SwitchRow label={t('res.align')} desc={t('res.alignHelp')} checked={align} onChange={setAlign} /></div>}
       <ul className="mt-2 divide-y">
         {song && cur.inst && <StemRow cur={cur} kind="mix" buffer={cur.inst} color="stem-mix" title={t('stem.mix')} tag={t('res.recommended')} primary />}
         <StemRow cur={cur} kind="converted" buffer={cur.converted} color="stem-vocal" title={t('stem.converted')} primary={!song} />

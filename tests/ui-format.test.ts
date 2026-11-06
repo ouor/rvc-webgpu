@@ -1,6 +1,6 @@
 // UI pure helpers: export file names (I-15 / MX-6) and the mute/solo mix (I-17).
 import { describe, expect, it } from 'vitest';
-import { effectiveMix, exportName, safe, zipName } from '../src/app/lib/format';
+import { effectiveMix, exportName, safe, settingsText, zipName } from '../src/app/lib/format';
 
 describe('export file names', () => {
   it('follows {song}_{kind}_{model}.{ext}', () => {
@@ -18,6 +18,19 @@ describe('export file names', () => {
     expect(safe('a/b\\c:d*e?f"g<h>i|j')).toBe('a-b-c-d-e-f-g-h-i-j');
     expect(safe('노래 제목\u0001')).toBe('노래 제목-');
     expect(safe('  ')).toBe('untitled');
+  });
+});
+
+describe('settings.txt', () => {
+  it('lists the options, the range and a stem scale only when it is not 1', () => {
+    const opts = { mode: 'song' as const, key: 12, indexRate: 0.75, protect: 0.33, rmsMixRate: 0.25, sid: 0, aggressiveness: 10, range: { start: 65, end: 95 } };
+    const base = { songName: 's', modelName: 'm', mode: 'song' as const, opts, hasIndex: true, version: '1.0', format: 'mp3', mix: { vocalGainDb: -3, instGainDb: 0, reverb: 0.2 }, mute: { vocal: false, inst: true }, aligned: false };
+    const a = settingsText({ ...base, scale: 1 });
+    expect(a).toContain('Pitch: +12 semitones');
+    expect(a).toContain('files start at 1:05');
+    expect(a).toContain('backing muted');
+    expect(a).not.toContain('Stem scale');
+    expect(settingsText({ ...base, scale: 0.9, aligned: true })).toMatch(/padded to the original timing[\s\S]*Stem scale: 0\.9000/);
   });
 });
 

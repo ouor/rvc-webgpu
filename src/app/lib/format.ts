@@ -109,3 +109,28 @@ export function fmtWhen(t: T, ms: number, now = Date.now()) {
   if (day(ms) === day(now - 86_400_000)) return t('time.yesterday', { t: hm });
   return d.toLocaleDateString(document.documentElement.lang || undefined, { month: 'short', day: 'numeric' });
 }
+
+/** I-13: settings.txt in the ZIP. English on purpose: the file travels to other tools and people. */
+export function settingsText(x: {
+  songName: string; modelName: string; mode: Options['mode']; opts: Options; hasIndex: boolean; version: string; format: string;
+  mix: MixParams; mute: { vocal: boolean; inst: boolean }; scale: number; aligned: boolean;
+}) {
+  const o = x.opts, r = o.range;
+  const lines = [
+    `Web RVC ${x.version}`,
+    `Song: ${x.songName}`,
+    `Voice model: ${x.modelName}`,
+    `Mode: ${x.mode}`,
+    `Pitch: ${o.key > 0 ? '+' : ''}${o.key} semitones`,
+    `Index rate: ${x.hasIndex ? o.indexRate : 'no index'}`,
+    `Protect: ${o.protect}`,
+    `RMS mix: ${o.rmsMixRate}`,
+    ...(x.mode === 'song' ? [`Separation aggressiveness: ${o.aggressiveness}`] : []),
+    ...(r ? [`Range: ${fmtTime(r.start)}-${fmtTime(r.end)} (${x.aligned ? 'padded to the original timing' : `files start at ${fmtTime(r.start)}`})`] : []),
+    `Format: ${x.format}`,
+    `Mix: vocal ${x.mute.vocal ? 'muted' : `${x.mix.vocalGainDb} dB`}, backing ${x.mute.inst ? 'muted' : `${x.mix.instGainDb} dB`}, reverb ${Math.round(x.mix.reverb * 100)} %`,
+    'Stems have no gain, reverb or normalization; only the mix does.',
+    ...(x.scale !== 1 ? [`Stem scale: ${x.scale.toFixed(4)} (all stems scaled together to avoid clipping)`] : []),
+  ];
+  return lines.join('\r\n') + '\r\n';
+}

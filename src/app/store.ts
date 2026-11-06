@@ -119,6 +119,7 @@ export interface Result {
   recentId?: string; // I-2: stored in recent work
   recentState?: 'saving' | 'saved' | 'off' | 'quota' | 'failed'; // DESIGN 9.9 save line
   restored?: { createdAt: number; modelId: string }; // opened from recent work (no source, no rerun)
+  sourceSeconds?: number; // whole song length, for "align to original timing" (I-14)
 }
 
 /** `alt`: an optional second action; resolve gets 'alt' for it, false for cancel. */
@@ -149,6 +150,7 @@ export interface State {
   mix: MixParams;
   mute: { vocal: boolean; inst: boolean }; // I-17: also applies to the saved mix
   solo?: 'vocal' | 'inst'; // listening only
+  align: boolean; // I-14: range results padded to the original timing (not persisted)
   format: AudioFormat;
   view: 'work' | 'result';
   settingsTab?: SettingsTab;
@@ -170,6 +172,7 @@ export const useApp = create<State>()(
       ab: 'B',
       mix: DEFAULT_MIX,
       mute: { vocal: false, inst: false },
+      align: false,
       format: 'mp3',
       view: 'work',
       resolvedTheme: 'light',

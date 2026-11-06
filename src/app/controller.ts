@@ -3,10 +3,12 @@ import { toast } from 'sonner';
 import { createEngineClient } from './engine-client';
 import { decodeFile, peaks, toAudioBuffer } from '@/audio/decode';
 import { renderMix, type MixParams } from '@/audio/mixer';
-import { encodeMp3, encodeWav, type AudioFormat } from '@/audio/wav';
+import type { AudioFormat } from '@/audio/wav';
+import { conformStems, type Conformed } from '@/audio/export';
+import { createExporter } from '@/audio/export-client';
 import { toAppError, type AppError } from '@/shared/errors';
 import { DEFAULT_CONVERT, DEFAULT_SEPARATE, type BackendPref, type JobSpec, type Progress, type RecentMix, type RvcModelInfo, type Stereo } from '@/shared/types';
-import { AUDIO_EXT, INDEX_EXT, MODEL_EXT, abLabel, download, effectiveMix, exportName, extOf, stripExt, type RunStage, type StemKind } from './lib/format';
+import { AUDIO_EXT, INDEX_EXT, MODEL_EXT, abLabel, download, effectiveMix, exportName, extOf, settingsText, stripExt, zipName, type RunStage, type StemKind } from './lib/format';
 import { DEFAULT_BASE_URL, DEFAULT_OPTIONS, STEPS, confirmAsync, get, isBusy, selBusy, selEngineBusy, selModelBaseUrl, set, type Job, type Model, type Options, type Result, type Settings, type SettingsTab, type Step, type StepInfo } from './store';
 import { version } from '../../package.json';
 import { errText, t } from './i18n';
@@ -60,6 +62,7 @@ export const toggleMute = (k: 'vocal' | 'inst') => { set((s) => ({ mute: { ...s.
 /** One solo at a time: turning one on turns the other off. */
 export const toggleSolo = (k: 'vocal' | 'inst') => set((s) => ({ solo: s.solo === k ? undefined : k }));
 export const setFormat = (format: AudioFormat) => set({ format });
+export const setAlign = (align: boolean) => set({ align });
 export const ackNotice = () => updateSettings({ noticeAck: true });
 export const showNoticeAgain = () => { updateSettings({ noticeAck: false }); openSettings(undefined); };
 export const answerConfirm = (ok: boolean | 'alt') => { get().confirm?.resolve(ok); set({ confirm: undefined }); };
@@ -486,7 +489,7 @@ async function run(rerun: boolean, profile: 'normal' | 'low') {
       songName: stripExt(s.song.name), modelName: s.model.info.name, mode: job.mode, opts: snapshot, hasIndex: !!job.indexId,
       converted: toAudioBuffer(r.converted),
       vocals: r.vocals && toAudioBuffer(r.vocals), inst: r.instrumental && toAudioBuffer(r.instrumental),
-      ms: now() - st.startedAt, seq: (get().result?.seq ?? 0) + 1,
+      ms: now() - st.startedAt, seq: (get().result?.seq ?? 0) + 1, sourceSeconds: s.song.duration,
     };
     set({ job: undefined, result, prev: prevResult, ab: 'B', view: 'result', stems: result.vocals && result.inst ? { vocals: result.vocals, inst: result.inst } : get().stems });
     void saveRecent(result, s.song.duration ?? seconds);
@@ -533,38 +536,58 @@ export async function recover(action: 'retry' | 'low' | 'wasm' | 'noIndex') {
 
 export const backToWork = () => set({ view: 'work' });
 
-async function to44k(b: AudioBuffer) {
-  if (b.sampleRate === 44100) return b;
-  const ctx = new OfflineAudioContext(b.numberOfChannels, Math.ceil(b.duration * 44100), 44100);
-  const src = ctx.createBufferSource();
-  src.buffer = b;
-  src.connect(ctx.destination);
-  src.start();
-  return ctx.startRendering();
-}
-
 const EXT: Record<AudioFormat, string> = { mp3: 'mp3', pcm16: 'wav', f32: 'wav' };
 const MIME: Record<AudioFormat, string> = { mp3: 'audio/mpeg', pcm16: 'audio/wav', f32: 'audio/wav' };
-export const MP3_BITRATE = 320_000; // I-12: 320 kbps CBR
+export const MP3_BITRATE = 320_000; // I-12: 320 kbps CBR (the export worker's encoder default)
+const exporter = createExporter(); // the worker starts on first use
+
+/** Range results start at the range unless aligned to the original timing (I-14). */
+const aligned = (r: Pick<Result, 'opts'>) => get().align && !!r.opts.range;
 
 export function fileName(r: Pick<Result, 'songName' | 'modelName' | 'opts'>, kind: StemKind) {
-  return exportName(r.songName, r.modelName, kind, EXT[get().format], r.opts.range?.start);
+  return exportName(r.songName, r.modelName, kind, EXT[get().format], aligned(r) ? undefined : r.opts.range?.start);
 }
 
 export const currentResult = () => { const s = get(); return s.ab === 'A' && s.prev ? s.prev : s.result; };
 
+const stereo = (b: AudioBuffer): Stereo => ({ sr: b.sampleRate, l: b.getChannelData(0), r: b.getChannelData(b.numberOfChannels > 1 ? 1 : 0) });
+let conformMemo: { r: Result; align: boolean; c: Promise<Conformed> } | undefined;
+/** I-14: every stem 44.1 kHz stereo, same length and start, one clipping factor. Kept for the last result asked. */
+function conformed(r: Result) {
+  const align = aligned(r);
+  if (conformMemo?.r.converted !== r.converted || conformMemo.align !== align) {
+    const c = conformStems({ converted: { sr: r.converted.sampleRate, data: r.converted.getChannelData(0) }, vocals: r.vocals && stereo(r.vocals), instrumental: r.inst && stereo(r.inst) },
+      { range: r.opts.range, sourceSeconds: r.sourceSeconds, alignToSource: align });
+    conformMemo = { r, align, c };
+  }
+  return conformMemo.c;
+}
+
+/** The mix is rendered from the conformed stems, so it has the same length and start as they do. */
+async function renderResultMix(c: Conformed) {
+  const s = get();
+  return renderMix({ vocal: toAudioBuffer(c.stems.converted), inst: c.stems.instrumental && toAudioBuffer(c.stems.instrumental) }, effectiveMix(s.mix, s.mute));
+}
+
+const STEM: Record<Exclude<StemKind, 'mix'>, 'converted' | 'vocals' | 'instrumental'> = { converted: 'converted', vocals: 'vocals', inst: 'instrumental' };
+
 /** One file in the chosen format. The mix gets gains, mute and reverb; stems are the untouched originals (I-14). */
 async function encodeStem(kind: StemKind, r = currentResult()) {
   const s = get();
-  const stems = { vocals: r?.vocals ?? s.stems?.vocals, inst: r?.inst ?? s.stems?.inst };
-  let buf: AudioBuffer | undefined;
-  if (kind === 'mix' && r) buf = await renderMix({ vocal: r.converted, inst: r.inst }, effectiveMix(s.mix, s.mute));
-  else if (kind === 'converted' && r) buf = await to44k(r.converted); // PRD 7.4: output is 44.1 kHz
-  else buf = kind === 'vocals' ? stems.vocals : stems.inst;
-  if (!buf) return undefined;
-  const blob = s.format === 'mp3' ? await encodeMp3(buf, MP3_BITRATE) : encodeWav(buf, s.format);
+  const fmt = s.format;
+  let blob: Blob | undefined;
+  if (r) {
+    const c = await conformed(r);
+    if (kind === 'mix') blob = await exporter.encode(await renderResultMix(c), fmt);
+    else { const x = c.stems[STEM[kind]]; if (x) blob = await exporter.encode(x, fmt, c.scale); }
+  } else {
+    // Separated stems of a failed job (progress panel): no result to conform against.
+    const b = kind === 'vocals' ? s.stems?.vocals : kind === 'inst' ? s.stems?.inst : undefined;
+    if (b) blob = await exporter.encode(b, fmt);
+  }
+  if (!blob) return undefined;
   const name = fileName(r ?? { songName: stripExt(s.song?.name ?? 'song'), modelName: s.model?.info?.name ?? '', opts: s.opts }, kind);
-  return new File([blob], name, { type: MIME[s.format] });
+  return new File([blob], name, { type: MIME[fmt] });
 }
 
 export async function exportStem(kind: StemKind, r = currentResult()) {
@@ -576,6 +599,28 @@ export async function exportStem(kind: StemKind, r = currentResult()) {
     toast.success(t('toast.saved', { name: f.name }));
   } catch (e) {
     toast.error(t('err.INTERNAL.title'), { description: toAppError(e).message }); // render/encode run here, not in the engine
+  }
+}
+
+/** I-13: the mix and every stem in the chosen format plus settings.txt, in one STORE zip built in the export worker. */
+export async function exportAll(r = currentResult()) {
+  if (!r) return;
+  try {
+    const s = get();
+    const c = await conformed(r);
+    const files = [];
+    if (c.stems.instrumental) files.push({ name: fileName(r, 'mix'), audio: await renderResultMix(c) });
+    files.push({ name: fileName(r, 'converted'), audio: c.stems.converted, scale: c.scale });
+    if (c.stems.vocals) files.push({ name: fileName(r, 'vocals'), audio: c.stems.vocals, scale: c.scale });
+    if (c.stems.instrumental) files.push({ name: fileName(r, 'inst'), audio: c.stems.instrumental, scale: c.scale });
+    const text = settingsText({ ...r, version, format: s.format, mix: s.mix, mute: s.mute, scale: s.format === 'f32' ? 1 : c.scale, aligned: aligned(r) });
+    const zip = await exporter.zip([...files, { name: 'settings.txt', text }], s.format);
+    const name = zipName(r.songName, r.modelName);
+    download(new File([zip], name, { type: 'application/zip' }), name);
+    markSaved(r);
+    toast.success(t('toast.saved', { name }));
+  } catch (e) {
+    toast.error(t('err.INTERNAL.title'), { description: toAppError(e).message });
   }
 }
 
@@ -637,7 +682,7 @@ async function restoreRecent(id: string, seq: number) {
     opts: { ...DEFAULT_OPTIONS, mode: j.mode, key: c.f0UpKey, indexRate: c.indexRate, protect: c.protect, rmsMixRate: c.rmsMixRate, sid: c.sid,
       aggressiveness: j.separate?.aggressiveness ?? DEFAULT_OPTIONS.aggressiveness, range: j.song.range },
     converted: toAudioBuffer(x.converted), vocals: x.vocals && toAudioBuffer(x.vocals), inst: x.instrumental && toAudioBuffer(x.instrumental),
-    ms: 0, seq, recentId: id, recentState: 'saved', savedOut: true, restored: { createdAt: j.createdAt, modelId: j.model.id },
+    ms: 0, seq, recentId: id, recentState: 'saved', savedOut: true, restored: { createdAt: j.createdAt, modelId: j.model.id }, sourceSeconds: j.song.durationSec,
   };
   return { result, mix: j.mix };
 }
