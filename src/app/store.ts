@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AppError } from '@/shared/errors';
-import { DEFAULT_CONVERT, DEFAULT_SEPARATE, type BackendPref, type CacheEntry, type DownloadItem, type EnvReport, type IndexInfo, type RvcModelInfo, type SavedModel } from '@/shared/types';
+import { DEFAULT_CONVERT, DEFAULT_SEPARATE, type BackendPref, type CacheEntry, type DownloadItem, type EnvReport, type IndexInfo, type RvcModelInfo, type SavedModel, type RecentSummary } from '@/shared/types';
 import type { AudioFormat } from '@/audio/wav';
 import type { MixParams } from '@/audio/mixer';
 import { DEFAULT_MIX } from '@/audio/mixer';
@@ -23,6 +23,7 @@ export interface Settings {
   remember: boolean;
   noticeAck: boolean;
   advancedOpen: boolean;
+  saveRecent: boolean; // I-2: keep finished results in recent work
 }
 
 export interface Options {
@@ -115,6 +116,9 @@ export interface Result {
   ms: number;
   seq: number;
   savedOut?: boolean; // mix or a file was downloaded/shared (I-1)
+  recentId?: string; // I-2: stored in recent work
+  recentState?: 'saving' | 'saved' | 'off' | 'quota' | 'failed'; // DESIGN 9.9 save line
+  restored?: { createdAt: number; modelId: string }; // opened from recent work (no source, no rerun)
 }
 
 /** `alt`: an optional second action; resolve gets 'alt' for it, false for cancel. */
@@ -132,6 +136,7 @@ export interface State {
   song?: Song;
   /** I-20 stems mode: the backing file; `song` is then the vocal file. */
   backing?: Song;
+  recent?: RecentSummary[];
   model?: Model;
   index?: IndexState;
   plan?: DownloadItem[];
@@ -156,7 +161,7 @@ export interface State {
 export const useApp = create<State>()(
   persist<State, [], [], Partial<State>>(
     (): State => ({
-      settings: { lang: 'ko', theme: 'system', backend: 'auto', remember: true, noticeAck: false, advancedOpen: false },
+      settings: { lang: 'ko', theme: 'system', backend: 'auto', remember: true, noticeAck: false, advancedOpen: false, saveRecent: true },
       opts: DEFAULT_OPTIONS,
       engineReady: false,
       online: navigator.onLine,

@@ -5,9 +5,9 @@ import { decodeFile, peaks, toAudioBuffer } from '@/audio/decode';
 import { renderMix, type MixParams } from '@/audio/mixer';
 import { encodeMp3, encodeWav, type AudioFormat } from '@/audio/wav';
 import { toAppError, type AppError } from '@/shared/errors';
-import { DEFAULT_CONVERT, DEFAULT_SEPARATE, type BackendPref, type JobSpec, type Progress, type RvcModelInfo, type Stereo } from '@/shared/types';
+import { DEFAULT_CONVERT, DEFAULT_SEPARATE, type BackendPref, type JobSpec, type Progress, type RecentMix, type RvcModelInfo, type Stereo } from '@/shared/types';
 import { AUDIO_EXT, INDEX_EXT, MODEL_EXT, abLabel, download, effectiveMix, exportName, extOf, stripExt, type RunStage, type StemKind } from './lib/format';
-import { DEFAULT_BASE_URL, DEFAULT_OPTIONS, STEPS, confirmAsync, get, isBusy, selEngineBusy, selModelBaseUrl, set, type Job, type Model, type Options, type Result, type Settings, type SettingsTab, type Step, type StepInfo } from './store';
+import { DEFAULT_BASE_URL, DEFAULT_OPTIONS, STEPS, confirmAsync, get, isBusy, selBusy, selEngineBusy, selModelBaseUrl, set, type Job, type Model, type Options, type Result, type Settings, type SettingsTab, type Step, type StepInfo } from './store';
 import { version } from '../../package.json';
 import { errText, t } from './i18n';
 
@@ -55,8 +55,8 @@ export const openSettings = (tab?: SettingsTab) => { set({ settingsTab: tab }); 
 export const setOnline = () => set({ online: navigator.onLine });
 export const setResolvedTheme = (resolvedTheme: 'light' | 'dark') => set({ resolvedTheme });
 export const setAB = (ab: 'A' | 'B') => set({ ab });
-export const setMix = (p: Partial<MixParams>) => set((s) => ({ mix: { ...s.mix, ...p } }));
-export const toggleMute = (k: 'vocal' | 'inst') => set((s) => ({ mute: { ...s.mute, [k]: !s.mute[k] } }));
+export const setMix = (p: Partial<MixParams>) => { set((s) => ({ mix: { ...s.mix, ...p } })); syncRecentMix(); };
+export const toggleMute = (k: 'vocal' | 'inst') => { set((s) => ({ mute: { ...s.mute, [k]: !s.mute[k] } })); syncRecentMix(); };
 /** One solo at a time: turning one on turns the other off. */
 export const toggleSolo = (k: 'vocal' | 'inst') => set((s) => ({ solo: s.solo === k ? undefined : k }));
 export const setFormat = (format: AudioFormat) => set({ format });
@@ -98,13 +98,14 @@ export function copyEnvInfo() {
 export async function refreshLists() {
   if (!get().engineReady) return;
   const current = latest('lists');
-  const [myModels, entries, est, persisted] = await Promise.all([
+  const [myModels, recent, entries, est, persisted] = await Promise.all([
     engine.myModels.list().catch(() => []),
+    engine.recent.list().catch(() => []),
     engine.cache.list().catch(() => []),
     navigator.storage?.estimate?.().catch(() => undefined),
     navigator.storage?.persisted?.().catch(() => false),
   ]);
-  if (current()) set({ myModels, cache: { entries, usage: est?.usage ?? 0, quota: est?.quota ?? 0, persisted: !!persisted } });
+  if (current()) set({ myModels, recent, cache: { entries, usage: est?.usage ?? 0, quota: est?.quota ?? 0, persisted: !!persisted } });
 }
 
 // ---------- files ----------
@@ -142,8 +143,8 @@ async function guardReplace() {
   return true;
 }
 
-/** DESIGN 9.9: a result is protected once a file was saved out (later also when it is in recent work). */
-const unprotected = (r?: Result) => !!r && !r.savedOut;
+/** DESIGN 9.9: a result is protected once a file was saved out or it is stored in recent work. */
+const unprotected = (r?: Result) => !!r && !r.savedOut && r.recentState !== 'saved';
 
 /** Before an unprotected result is dropped: save its mix and go on, go on anyway, or stop. `aLabel` names the A side on a rerun. */
 async function keepUnsaved(r: Result | undefined, aLabel?: string) {
@@ -488,6 +489,7 @@ async function run(rerun: boolean, profile: 'normal' | 'low') {
       ms: now() - st.startedAt, seq: (get().result?.seq ?? 0) + 1,
     };
     set({ job: undefined, result, prev: prevResult, ab: 'B', view: 'result', stems: result.vocals && result.inst ? { vocals: result.vocals, inst: result.inst } : get().stems });
+    void saveRecent(result, s.song.duration ?? seconds);
   } catch (e) {
     const err = toAppError(e);
     const j = get().job;
@@ -591,10 +593,89 @@ export async function shareMix(r = currentResult()) {
 
 /** I-1: a result the user saved (downloaded or shared) no longer needs a leave warning. */
 function markSaved(r?: Result) {
-  if (!r || r.savedOut) return;
+  if (r && !r.savedOut) patchResult(r.seq, { savedOut: true });
+}
+
+/** Results are replaced, never mutated; seq tells B and A apart. */
+function patchResult(seq: number, p: Partial<Result>) {
   const s = get();
-  if (s.result === r) set({ result: { ...r, savedOut: true } });
-  else if (s.prev === r) set({ prev: { ...r, savedOut: true } });
+  if (s.result?.seq === seq) set({ result: { ...s.result, ...p } });
+  else if (s.prev?.seq === seq) set({ prev: { ...s.prev, ...p } });
+}
+
+// ---------- recent work (I-2) ----------
+
+const recentMix = (): RecentMix => {
+  const { mix, mute } = get();
+  return { vocalGainDb: mix.vocalGainDb, instGainDb: mix.instGainDb, reverb: mix.reverb, muteVocal: mute.vocal, muteInst: mute.inst };
+};
+
+async function saveRecent(r: Result, songSeconds: number) {
+  if (!get().settings.saveRecent) return patchResult(r.seq, { recentState: 'off' });
+  patchResult(r.seq, { recentState: 'saving' });
+  try {
+    const x = await engine.recent.save({ songName: r.songName, songSeconds, appVersion: version, mix: recentMix() });
+    patchResult(r.seq, 'id' in x ? { recentState: 'saved', recentId: x.id } : { recentState: 'quota' });
+  } catch {
+    patchResult(r.seq, { recentState: 'failed' });
+  }
+  void refreshLists();
+}
+
+let mixTimer: ReturnType<typeof setTimeout> | undefined;
+/** The stored job reopens with the mix last heard (debounced: sliders fire per step). */
+function syncRecentMix() {
+  clearTimeout(mixTimer);
+  mixTimer = setTimeout(() => { const id = currentResult()?.recentId; if (id) engine.recent.updateMix(id, recentMix()).catch(() => {}); }, 800);
+}
+
+async function restoreRecent(id: string, seq: number) {
+  const x = await engine.recent.open(id);
+  const j = x.job, c = j.convert;
+  const result: Result = {
+    songName: j.song.name, modelName: j.model.name, mode: j.mode, hasIndex: !!j.model.indexId,
+    opts: { ...DEFAULT_OPTIONS, mode: j.mode, key: c.f0UpKey, indexRate: c.indexRate, protect: c.protect, rmsMixRate: c.rmsMixRate, sid: c.sid,
+      aggressiveness: j.separate?.aggressiveness ?? DEFAULT_OPTIONS.aggressiveness, range: j.song.range },
+    converted: toAudioBuffer(x.converted), vocals: x.vocals && toAudioBuffer(x.vocals), inst: x.instrumental && toAudioBuffer(x.instrumental),
+    ms: 0, seq, recentId: id, recentState: 'saved', savedOut: true, restored: { createdAt: j.createdAt, modelId: j.model.id },
+  };
+  return { result, mix: j.mix };
+}
+
+/** Opens a stored job on the result screen; `aId` opens a second job of the same song as A. */
+export async function openRecent(id: string, aId?: string) {
+  if (selBusy(get()) || !(await guardReplace())) return;
+  const seq = (get().result?.seq ?? 0) + 2;
+  try {
+    const [b, a] = await Promise.all([restoreRecent(id, seq), aId ? restoreRecent(aId, seq - 1) : undefined]);
+    const m = b.mix;
+    set({ result: b.result, prev: a?.result, ab: 'B', view: 'result', stems: undefined, solo: undefined,
+      mix: { ...get().mix, vocalGainDb: m.vocalGainDb, instGainDb: m.instGainDb, reverb: m.reverb }, mute: { vocal: !!m.muteVocal, inst: !!m.muteInst } });
+  } catch (e) {
+    toast.error(t('toast.recentOpenFailed'), reason(e));
+    void refreshLists();
+  }
+}
+
+/** DESIGN 9.4: a restored job cannot rerun; load its settings (and its model when saved) and wait for the song. */
+export async function startFromRecent() {
+  const r = get().result;
+  if (!r?.restored) return;
+  const { modelId } = r.restored;
+  clearSong();
+  setOpts({ ...r.opts, range: undefined });
+  if (get().myModels?.some((m) => m.id === modelId) && get().model?.info?.id !== modelId) await openMyModel(modelId);
+}
+
+/** One job, or all of them when `id` is omitted (with a confirm). */
+export async function removeRecent(id?: string) {
+  if (!id) {
+    const n = get().recent?.length ?? 0;
+    if (!(await confirmAsync({ title: t('confirm.recentTitle'), body: t('confirm.recentBody', { n }), action: t('confirm.recentAction'), destructive: true }))) return;
+  }
+  try { await (id ? engine.recent.remove(id) : engine.recent.clear()); } catch (e) { toast.error(t('toast.deleteFailed'), reason(e)); }
+  for (const r of [get().result, get().prev]) if (r?.recentId && (!id || r.recentId === id)) patchResult(r.seq, { recentId: undefined, recentState: undefined });
+  void refreshLists();
 }
 
 /** OOM recovery and progress panel: save the separated stems even when a later stage failed. */

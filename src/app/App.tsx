@@ -6,6 +6,7 @@ import { ModelSection, SongCard } from './components/Inputs';
 import { OptionsCard } from './components/Options';
 import { ActionBar, DownloadDialog, ProgressPanel } from './components/Run';
 import { ResultView } from './components/Result';
+import { RecentList } from './components/Recent';
 import { SettingsDialog } from './components/Settings';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { addFiles, setOnline, setResolvedTheme } from './controller';
@@ -34,6 +35,7 @@ function Work() {
   return (
     <main className="mx-auto max-w-[1280px] px-6 pt-5">
       <FirstRunNotice />
+      <RecentList />
       {/* DESIGN S1: cards are locked (inert, 55 %) while processing so the user still sees what runs. */}
       <div className={cn('grid gap-5 items-start grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.2fr_1fr_1fr] transition-opacity', busy && 'opacity-55')} inert={busy}>
         <SongCard />

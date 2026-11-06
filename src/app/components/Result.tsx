@@ -8,10 +8,10 @@ import { OptionsFields } from './Options';
 import { AudioPlayer, PlayButton, Waveform, bufferPeaks, seek, toggle, usePlayer } from './Player';
 import { DEFAULT_MIX } from '@/audio/mixer';
 import type { AudioFormat } from '@/audio/wav';
-import { abLabel, changedKeys, effectiveMix, estimateRun, fmtBytes, fmtEta, fmtSigned, fmtTime, formatChanges, type RunStage, type StemKind } from '../lib/format';
+import { abLabel, changedKeys, effectiveMix, estimateRun, fmtBytes, fmtEta, fmtSigned, fmtTime, fmtWhen, formatChanges, type RunStage, type StemKind } from '../lib/format';
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '../lib/utils';
-import { MP3_BITRATE, backToWork, exportStem, fileName, setAB, setFormat, setMix, shareMix, start, toggleMute, toggleSolo } from '../controller';
+import { MP3_BITRATE, backToWork, exportStem, fileName, setAB, setFormat, setMix, shareMix, start, startFromRecent, toggleMute, toggleSolo } from '../controller';
 import { selBusy, selEngineBusy, selCurrentResult, useApp, type Options, type Result } from '../store';
 import { useT, type T } from '../i18n';
 
@@ -116,9 +116,11 @@ function Hero({ result, cur }: { result: Result; cur: Result }) {
 
   return (
     <section className={cn('rounded-2xl bg-card shadow-card p-6', busy && 'opacity-55')} inert={busy}>
-      <p className="flex items-center gap-1.5 text-small font-semibold text-success mb-3">
-        <CircleCheck className="size-4" />{song ? t('res.doneSong', { t: fmtTime(result.ms / 1000) }) : t('res.doneVoice', { t: fmtTime(result.ms / 1000) })}
-      </p>
+      {result.restored ? <p className="text-caption text-muted-foreground mb-3">{t('res.savedAt', { d: fmtWhen(t, result.restored.createdAt) })}</p> : (
+        <p className="flex items-center gap-1.5 text-small font-semibold text-success mb-3">
+          <CircleCheck className="size-4" />{song ? t('res.doneSong', { t: fmtTime(result.ms / 1000) }) : t('res.doneVoice', { t: fmtTime(result.ms / 1000) })}
+        </p>
+      )}
       {prev && <ABSwitch result={result} prev={prev} />}
       <h1 ref={title} tabIndex={-1} className="text-display break-words focus:outline-none">{cur.songName}</h1>
       <p className="text-small text-muted-foreground mt-1 tnum flex items-center gap-1.5 flex-wrap">
@@ -226,9 +228,7 @@ function Files({ cur }: { cur: Result }) {
     <section className="rounded-2xl bg-card shadow-card p-6">
       <h2 className="text-h2">{t('res.files')}</h2>
       <FormatPicker seconds={seconds} voice={!song} />
-      {!cur.savedOut && (
-        <p className="mt-4 flex items-start gap-2 rounded-lg bg-warning-soft px-3 py-2 text-small"><TriangleAlert className="size-4 mt-0.5 shrink-0 text-warning" />{t('res.notSaved')}</p>
-      )}
+      <SaveLine r={cur} />
       {song && <p className="mt-3 flex items-center gap-2 text-small"><Info className="size-4 shrink-0 text-accent-foreground" />{t('res.mixNote')}</p>}
       <ul className="mt-2 divide-y">
         {song && cur.inst && <StemRow cur={cur} kind="mix" buffer={cur.inst} color="stem-mix" title={t('stem.mix')} tag={t('res.recommended')} primary />}
@@ -237,6 +237,29 @@ function Files({ cur }: { cur: Result }) {
         {song && cur.inst && <StemRow cur={cur} kind="inst" buffer={cur.inst} color="stem-inst" title={t('stem.inst')} />}
       </ul>
     </section>
+  );
+}
+
+/** DESIGN 9.9 save line: recent-work state first; a warning only while nothing protects the result. */
+function SaveLine({ r }: { r: Result }) {
+  const t = useT();
+  const box = 'mt-4 flex items-start gap-2 rounded-lg px-3 py-2 text-small';
+  if (r.recentState === 'saved' && !r.restored) return <p className={cn(box, 'bg-success-soft')}><CircleCheck className="size-4 mt-0.5 shrink-0 text-success" />{t('res.recentSaved')}</p>;
+  if (r.recentState === 'saving') return <p className={cn(box, 'bg-muted')}><Loader2 className="size-4 mt-0.5 shrink-0 animate-spin" />{t('res.recentSaving')}</p>;
+  if (r.savedOut || r.recentState === 'saved') return null;
+  const key = r.recentState === 'off' ? 'res.recentOff' : r.recentState === 'quota' ? 'res.recentQuota' : r.recentState === 'failed' ? 'res.recentFailed' : 'res.notSaved';
+  return <p className={cn(box, 'bg-warning-soft')}><TriangleAlert className="size-4 mt-0.5 shrink-0 text-warning" />{t(key)}</p>;
+}
+
+/** DESIGN 9.4: a restored job has no source or caches, so the rerun panel offers a fresh start instead. */
+function Restart() {
+  const t = useT();
+  return (
+    <aside className="rounded-2xl bg-card shadow-card p-6 lg:sticky lg:top-20">
+      <h2 className="text-h2">{t('restored.title')}</h2>
+      <p className="text-small text-muted-foreground mt-1">{t('restored.body')}</p>
+      <Button size="cta" className="mt-5 w-full" onClick={() => void startFromRecent()}>{t('restored.start')}</Button>
+    </aside>
   );
 }
 
@@ -282,7 +305,7 @@ export function ResultView() {
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-5 items-start">
         <div className="space-y-5 min-w-0"><Hero result={result} cur={cur} /><Files cur={cur} /></div>
-        <Rerun result={result} />
+        {result.restored ? <Restart /> : <Rerun result={result} />}
       </div>
     </main>
   );

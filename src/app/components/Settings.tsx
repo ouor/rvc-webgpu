@@ -5,10 +5,10 @@ import { Dialog as D, Tabs } from 'radix-ui';
 import { Button } from './ui/button';
 import { Segmented, SwitchRow } from './Field';
 import type { BackendPref, CacheEntry, SavedModel } from '@/shared/types';
-import { fmtBytes, fmtHz, fmtModelSize, hostOf } from '../lib/format';
+import { fmtBytes, fmtHz, fmtModelSize, fmtWhen, hostOf } from '../lib/format';
 import { roleOf } from '../lib/catalog';
 import { cn } from '../lib/utils';
-import { clearCache, copyEnvInfo, importCache, openMyModel, openSettings, removeCacheItem, removeMine, renameMine, setBackend, setModelBaseUrl, showNoticeAgain, updateSettings, verifyCacheItem } from '../controller';
+import { clearCache, copyEnvInfo, importCache, openMyModel, openSettings, removeCacheItem, removeMine, removeRecent, renameMine, setBackend, setModelBaseUrl, showNoticeAgain, updateSettings, verifyCacheItem } from '../controller';
 import { DEFAULT_BASE_URL, selEngineBusy, selModelBaseUrl, useApp, type SettingsTab } from '../store';
 import { useT } from '../i18n';
 import { version } from '../../../package.json';
@@ -103,6 +103,9 @@ function Storage() {
   const pub = entries?.filter((e) => e.kind === 'public') ?? [];
   const pubBytes = pub.reduce((a, e) => a + e.bytes, 0);
   const mineBytes = (entries ?? []).filter((e) => e.kind === 'my-model').reduce((a, e) => a + e.bytes, 0);
+  const recentBytes = (entries ?? []).filter((e) => e.kind === 'recent').reduce((a, e) => a + e.bytes, 0);
+  const recent = useApp((s) => s.recent) ?? [];
+  const saveRecent = useApp((s) => s.settings.saveRecent);
   const pct = (b: number) => (est?.quota ? `${Math.max(0.5, (b / est.quota) * 100)}%` : '0%');
   const applyUrl = (v: string) => { setUrl(v); setModelBaseUrl(v); };
   return (
@@ -110,16 +113,35 @@ function Storage() {
       <div>
         <h3 className={h3}>{t('set.storage')}</h3>
         <div className="mt-3 rounded-xl border p-4">
-          <div className="flex justify-between text-small tnum"><span className="font-semibold">{t('set.used', { n: fmtBytes(pubBytes + mineBytes) })}</span><span className="text-muted-foreground">{t('set.quota', { n: fmtBytes(est?.quota ?? 0) })}</span></div>
+          <div className="flex justify-between text-small tnum"><span className="font-semibold">{t('set.used', { n: fmtBytes(pubBytes + mineBytes + recentBytes) })}</span><span className="text-muted-foreground">{t('set.quota', { n: fmtBytes(est?.quota ?? 0) })}</span></div>
           <div className="mt-2 h-2.5 rounded-full bg-muted overflow-hidden flex">
-            <span className="h-full bg-primary" style={{ width: pct(pubBytes) }} /><span className="h-full bg-stem-vocal" style={{ width: pct(mineBytes) }} />
+            <span className="h-full bg-primary" style={{ width: pct(pubBytes) }} /><span className="h-full bg-stem-vocal" style={{ width: pct(mineBytes) }} /><span className="h-full bg-stem-inst" style={{ width: pct(recentBytes) }} />
           </div>
           <div className="flex gap-4 mt-2 text-caption text-muted-foreground tnum">
             <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-primary" />{t('set.pubModels', { n: fmtBytes(pubBytes) })}</span>
             <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-stem-vocal" />{t('set.myModels', { n: fmtBytes(mineBytes) })}</span>
+            <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-stem-inst" />{t('set.recentLegend', { n: fmtBytes(recentBytes) })}</span>
           </div>
           <p className="text-caption text-muted-foreground mt-3 flex items-center gap-1.5"><Lock className="size-3.5" />{est?.persisted ? t('set.persisted') : t('set.notPersisted')}</p>
         </div>
+      </div>
+      <div>
+        <div className="flex items-center justify-between">
+          <h3 className={h3}>{t('recent.title')}</h3>
+          <Button variant="ghost" size="sm" className="text-destructive" disabled={!recent.length || busy} onClick={() => void removeRecent()}>{t('set.clearAll')}</Button>
+        </div>
+        <div className="mt-2"><SwitchRow label={t('set.recentSwitch')} desc={t('set.recentSwitchDesc')} checked={saveRecent} onChange={(v) => updateSettings({ saveRecent: v })} /></div>
+        {recent.length ? (
+          <ul className="mt-3 divide-y border-y">
+            {recent.map((r) => (
+              <li key={r.id} className="flex items-center gap-3 py-2.5 text-small">
+                <span className="flex-1 min-w-0 truncate"><b>{r.songName}</b> <span className="text-muted-foreground">{r.modelName} · {fmtWhen(t, r.createdAt)}</span></span>
+                <span className="tnum text-muted-foreground">{fmtBytes(r.bytes)}</span>
+                <button type="button" disabled={busy} className="grid place-items-center size-8 rounded-lg hover:bg-muted text-muted-foreground hover:text-destructive disabled:opacity-40" aria-label={t('recent.remove', { name: r.songName })} onClick={() => void removeRecent(r.id)}><Trash2 className="size-4" /></button>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-small text-muted-foreground mt-2">{t('set.recentEmpty')}</p>}
       </div>
       <div>
         <div className="flex items-center justify-between">
@@ -203,6 +225,7 @@ function Privacy() {
       <div>
         <h3 className={h3}>{t('privacy.chip')}</h3>
         <p className="text-small text-muted-foreground mt-1">{t('privacy.body')}</p>
+        <p className="text-small mt-2">{t('privacy.recent')}</p>
         <table className="w-full mt-4 text-small">
           <thead className="text-left text-caption text-muted-foreground"><tr><th className="py-2 font-semibold">{t('privacy.addr')}</th><th className="font-semibold">{t('privacy.what')}</th><th className="font-semibold">{t('privacy.when')}</th></tr></thead>
           <tbody className="divide-y border-y">

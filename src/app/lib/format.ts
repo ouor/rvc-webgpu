@@ -100,3 +100,12 @@ export const effectiveMix = (m: MixParams, mute: { vocal: boolean; inst: boolean
   vocalGainDb: mute.vocal || solo === 'inst' ? -Infinity : m.vocalGainDb,
   instGainDb: mute.inst || solo === 'vocal' ? -Infinity : m.instGainDb,
 });
+
+/** DESIGN 9.4: today HH:MM / yesterday HH:MM / a short date. */
+export function fmtWhen(t: T, ms: number, now = Date.now()) {
+  const d = new Date(ms), day = (x: number) => new Date(x).toDateString();
+  const hm = d.toLocaleTimeString(document.documentElement.lang || undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+  if (day(ms) === day(now)) return t('time.today', { t: hm });
+  if (day(ms) === day(now - 86_400_000)) return t('time.yesterday', { t: hm });
+  return d.toLocaleDateString(document.documentElement.lang || undefined, { month: 'short', day: 'numeric' });
+}
