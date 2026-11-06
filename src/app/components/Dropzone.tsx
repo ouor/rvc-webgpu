@@ -1,6 +1,7 @@
 // DESIGN Dropzone: click/Enter/Space opens the picker; dropped files are routed by extension (addFiles).
 import type { ReactNode } from 'react';
 import { useDropzone } from 'react-dropzone';
+import { Bar } from './Bar';
 import { cn } from '../lib/utils';
 import { addFiles } from '../controller';
 import { useT } from '../i18n';
@@ -19,7 +20,7 @@ export function Dropzone({ icon, title, hint, accept, multiple, height, parsing,
       <div className="w-full rounded-xl border-2 border-dashed border-primary/50 bg-accent/40 flex flex-col items-center justify-center gap-3 px-6 text-center" style={{ height }} role="status" aria-live="polite">
         <span className="grid place-items-center size-12 rounded-2xl bg-accent text-accent-foreground">{icon}</span>
         <span className="font-semibold">{parsing}</span>
-        <div className="w-40 h-1.5 rounded-full bg-muted overflow-hidden"><div className="h-full w-2/5 rounded-full bg-primary animate-indet" /></div>
+        <Bar className="w-40" />
       </div>
     );
   }

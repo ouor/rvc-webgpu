@@ -45,6 +45,7 @@ export function usePlayer(stems: Stems | undefined, mix?: MixParams) {
   return player;
 }
 
+// Tokens are HSL channels (globals.css); if they move to oklch this must change too.
 const cssColor = (token: string, alpha = 1) => {
   const v = getComputedStyle(document.documentElement).getPropertyValue(`--${token}`).trim();
   return `hsl(${v} / ${alpha})`;

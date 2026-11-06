@@ -37,7 +37,7 @@ export function AppHeader() {
   return (
     <header className="sticky top-0 z-40 border-b bg-card/85 backdrop-blur">
       <div className="mx-auto max-w-[1280px] h-14 px-6 flex items-center gap-3">
-        <div className="flex items-center gap-2 font-bold text-[17px]">
+        <div className="flex items-center gap-2 font-bold text-lead">
           <span className="grid place-items-center size-7 rounded-lg bg-primary text-primary-foreground"><AudioWaveform className="size-4" /></span>
           Web RVC
         </div>
@@ -99,7 +99,7 @@ export function FirstRunNotice() {
         <p className="font-semibold">{t('notice.title')}</p>
         <p className="text-small text-muted-foreground mt-0.5">{t('notice.body')}</p>
       </div>
-      <Button variant="secondary" className="h-9 rounded-lg" onClick={ackNotice}>{t('notice.ack')}</Button>
+      <Button variant="secondary" onClick={ackNotice}>{t('notice.ack')}</Button>
     </div>
   );
 }
@@ -120,8 +120,8 @@ export function MobileGate() {
           <p className="font-semibold">{t('mobile.recTitle')}</p>
           <p className="text-muted-foreground mt-1">{t('mobile.rec')}</p>
         </div>
-        <Button className="mt-6 w-full h-12 rounded-xl text-body font-semibold" onClick={() => { void navigator.clipboard.writeText(location.href); toast(t('toast.linkCopied')); }}>{t('mobile.copy')}</Button>
-        <Button variant="ghost" className="mt-2 w-full h-12 rounded-xl text-body font-semibold text-muted-foreground" onClick={() => { try { sessionStorage.setItem('web-rvc:mobile-ok', '1'); } catch { /* ignore */ } setGo(true); }}>{t('mobile.continue')}</Button>
+        <Button size="cta" className="mt-6 w-full" onClick={() => { void navigator.clipboard.writeText(location.href); toast(t('toast.linkCopied')); }}>{t('mobile.copy')}</Button>
+        <Button variant="ghost" size="cta" className="mt-2 w-full text-muted-foreground" onClick={() => { try { sessionStorage.setItem('web-rvc:mobile-ok', '1'); } catch { /* ignore */ } setGo(true); }}>{t('mobile.continue')}</Button>
       </div>
     </div>
   );

@@ -94,7 +94,7 @@ function StemRow({ cur, kind, buffer, color, title, primary, tag }: { cur: Resul
       </div>
       <div className="flex-1 min-w-0 hidden md:block"><Waveform peaks={bufferPeaks(buffer, 400)} duration={buffer.duration} color={color} height={32} /></div>
       <span className="text-caption text-muted-foreground tnum w-14 text-right">{fmtBytes(bytes)}</span>
-      <Button variant={primary ? 'default' : 'secondary'} className="h-9 rounded-lg min-w-20" disabled={busy}
+      <Button variant={primary ? 'default' : 'secondary'} size="sm" className="min-w-20" disabled={busy}
         onClick={async () => { setBusy(true); try { await exportStem(kind, cur); } finally { setBusy(false); } }}>
         {busy ? <Loader2 className="animate-spin" /> : <DownloadIcon />}{t('common.save')}
       </Button>
@@ -146,7 +146,7 @@ function Rerun({ result: r }: { result: Result }) {
           <p className="text-caption text-muted-foreground mt-0.5">{sepAgain ? t('rerun.sepAgainSub', { eta }) : t('rerun.reuseSub', { eta })}</p>
         </div>
       )}
-      <Button className="mt-5 w-full h-12 rounded-xl text-lead font-semibold disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled={!changes || busy}
+      <Button size="cta" className="mt-5 w-full" disabled={!changes || busy}
         aria-describedby="rerun-why" onClick={() => void start({ rerun: true })}>{t('rerun.button')}</Button>
       <p id="rerun-why" className="text-caption text-muted-foreground mt-2 text-center">{!changes ? t('rerun.noChange') : prev ? t('rerun.abReplace') : t('rerun.abKeep')}</p>
     </aside>
@@ -161,7 +161,7 @@ export function ResultView() {
   return (
     <main className="mx-auto max-w-[1280px] px-6 pt-5">
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <Button variant="ghost" className="h-9 rounded-lg -ml-2" onClick={backToWork}><ArrowLeft />{t('res.back')}</Button>
+        <Button variant="ghost" size="sm" className="-ml-2" onClick={backToWork}><ArrowLeft />{t('res.back')}</Button>
         <span className="flex-1" />
         <p className="text-small text-muted-foreground flex items-center gap-1.5"><Info className="size-4" />{t('res.notSaved')}</p>
       </div>

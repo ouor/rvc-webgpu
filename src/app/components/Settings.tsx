@@ -122,7 +122,7 @@ function Storage() {
       <div>
         <div className="flex items-center justify-between">
           <h3 className={h3}>{t('set.pubTitle')}</h3>
-          <Button variant="ghost" className="h-8 text-destructive hover:text-destructive" disabled={!pub.length || busy} onClick={() => void clearCache()}>{t('set.clearAll')}</Button>
+          <Button variant="ghost" size="sm" className="text-destructive" disabled={!pub.length || busy} onClick={() => void clearCache()}>{t('set.clearAll')}</Button>
         </div>
         {pub.length ? (
           <ul className="mt-2 divide-y border-y">
@@ -131,7 +131,7 @@ function Storage() {
                 <span className="flex-1 min-w-0 truncate"><b>{t(roleOf(e.id))}</b> <span className="text-muted-foreground">{e.name}</span></span>
                 <StatusChip status={verifying === e.id ? 'checking' : e.status} />
                 <span className="tnum text-muted-foreground">{fmtBytes(e.bytes)}</span>
-                <Button variant="ghost" className="h-8 px-2 rounded-lg text-small" disabled={busy || !!verifying} onClick={() => void verify(e.id)}>{t('cache.verify')}</Button>
+                <Button variant="ghost" size="sm" disabled={busy || !!verifying} onClick={() => void verify(e.id)}>{t('cache.verify')}</Button>
                 <button type="button" disabled={busy} className="grid place-items-center size-8 rounded-lg hover:bg-muted text-muted-foreground hover:text-destructive disabled:opacity-40" aria-label={t('common.delete')} onClick={() => void removeCacheItem(e.id)}><Trash2 className="size-4" /></button>
               </li>
             ))}
@@ -139,7 +139,7 @@ function Storage() {
         ) : <p className="text-small text-muted-foreground mt-2">{entries ? t('set.pubEmpty') : t('env.checking')}</p>}
         <p className="text-caption text-muted-foreground mt-2">{t('set.integrityNote')}</p>
         <input ref={fileRef} type="file" multiple hidden onChange={(ev) => { const f = [...(ev.target.files ?? [])]; ev.target.value = ''; if (f.length) void doImport(f); }} />
-        <Button variant="secondary" className="mt-3 h-9 rounded-lg" disabled={busy || importing} onClick={() => fileRef.current?.click()}>{importing ? <Loader2 className="animate-spin" /> : <FolderInput />}{t('set.fillLocal')}</Button>
+        <Button variant="secondary" className="mt-3" disabled={busy || importing} onClick={() => fileRef.current?.click()}>{importing ? <Loader2 className="animate-spin" /> : <FolderInput />}{t('set.fillLocal')}</Button>
         <p className="text-caption text-muted-foreground mt-1">{t('set.fillLocalSub')}</p>
       </div>
       <div>
@@ -148,8 +148,8 @@ function Storage() {
         <div className="flex gap-2 mt-3">
           <input value={url} onChange={(e) => setUrl(e.target.value)} aria-label={t('set.repo')} spellCheck={false}
             className="flex-1 min-w-0 h-9 rounded-lg border border-input bg-card px-3 text-small font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-          <Button className="h-9 rounded-lg" disabled={busy || url === baseUrl || !url.trim()} onClick={() => applyUrl(url.trim())}>{t('common.apply')}</Button>
-          <Button variant="secondary" className="h-9 rounded-lg" disabled={busy || baseUrl === DEFAULT_BASE_URL} onClick={() => applyUrl(DEFAULT_BASE_URL)}>{t('set.repoDefault')}</Button>
+          <Button  disabled={busy || url === baseUrl || !url.trim()} onClick={() => applyUrl(url.trim())}>{t('common.apply')}</Button>
+          <Button variant="secondary"  disabled={busy || baseUrl === DEFAULT_BASE_URL} onClick={() => applyUrl(DEFAULT_BASE_URL)}>{t('set.repoDefault')}</Button>
         </div>
         <p className="text-caption text-muted-foreground mt-2">{t('set.repoCsp')}</p>
       </div>
@@ -182,7 +182,7 @@ function Models() {
                 <p className="text-caption text-muted-foreground">{[m.source === 'onnx' && 'ONNX', m.version, fmtHz(m.sr), m.f0 ? t('model.f0') : t('model.nof0'), m.indexId ? (m.index ? t('mine.indexN', { n: m.index.nVectors.toLocaleString() }) : 'index') : t('set.noIndex'), (m.lastUsed || m.savedAt) > 0 && t('mine.lastUsed', { d: fmtDate(m.lastUsed || m.savedAt, lang) })].filter(Boolean).join(' · ')}</p>
               </div>
               <span className="text-caption text-muted-foreground tnum">{fmtBytes(entries?.find((e) => e.id === m.id)?.bytes ?? m.bytes)}</span>
-              <Button variant="secondary" className="h-8 rounded-lg" disabled={busy} onClick={() => void openMyModel(m.id)}>{t('set.use')}</Button>
+              <Button variant="secondary" size="sm" disabled={busy} onClick={() => void openMyModel(m.id)}>{t('set.use')}</Button>
               <button type="button" disabled={busy} className="grid place-items-center size-8 rounded-lg hover:bg-muted text-muted-foreground hover:text-destructive disabled:opacity-40" aria-label={t('common.delete')} onClick={() => void removeMine(m.id, m.name)}><Trash2 className="size-4" /></button>
             </li>
           ))}
@@ -212,7 +212,7 @@ function Privacy() {
       <div>
         <h3 className={h3}>{t('privacy.noticeTitle')}</h3>
         <p className="text-small text-muted-foreground mt-1">{t('notice.body')}</p>
-        <Button variant="secondary" className="mt-3 h-9 rounded-lg" onClick={showNoticeAgain}>{t('privacy.showNotice')}</Button>
+        <Button variant="secondary" className="mt-3" onClick={showNoticeAgain}>{t('privacy.showNotice')}</Button>
       </div>
     </div>
   );
@@ -246,7 +246,7 @@ function About() {
           <a className="text-primary underline-offset-2 hover:underline" href="https://github.com/Vanilagy/mediabunny" target="_blank" rel="noreferrer">mediabunny</a>
         </p>
       </div>
-      <Button variant="secondary" className="h-9 rounded-lg" onClick={copyEnvInfo}><Clipboard />{t('about.copyEnv')}</Button>
+      <Button variant="secondary"  onClick={copyEnvInfo}><Clipboard />{t('about.copyEnv')}</Button>
       <p className="text-caption text-muted-foreground">{t('about.copyNote')}</p>
     </div>
   );

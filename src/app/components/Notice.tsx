@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { CircleX, Info, ShieldAlert, TriangleAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { AppError } from '@/shared/errors';
+import { Button } from './ui/button';
 import { cn } from '../lib/utils';
 import { errText, useT } from '../i18n';
 
@@ -66,8 +67,5 @@ export function Banner({ tone, title, body, actions, onClose, icon }: { tone: To
 
 /** Small action button used inside notices and banners. */
 export const NoticeButton = ({ children, onClick, primary }: { children: ReactNode; onClick: () => void; primary?: boolean }) => (
-  <button type="button" onClick={onClick}
-    className={cn('inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-small font-semibold shrink-0', primary ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'bg-card shadow-card hover:bg-muted')}>
-    {children}
-  </button>
+  <Button size="sm" variant={primary ? 'default' : 'card'} onClick={onClick}>{children}</Button>
 );

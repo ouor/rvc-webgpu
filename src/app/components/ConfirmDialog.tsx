@@ -1,6 +1,5 @@
 // Global confirm dialog (store.confirm, opened by confirmAsync in actions).
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './ui/alert-dialog';
-import { cn } from '../lib/utils';
 import { answerConfirm } from '../controller';
 import { useApp } from '../store';
 import { useT } from '../i18n';
@@ -18,7 +17,7 @@ export function ConfirmDialog() {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={() => done(false)}>{t('common.cancel')}</AlertDialogCancel>
-          <AlertDialogAction className={cn(c?.destructive && 'bg-destructive text-destructive-foreground hover:bg-destructive/90')} onClick={() => done(true)}>{c?.action}</AlertDialogAction>
+          <AlertDialogAction variant={c?.destructive ? 'destructive' : 'default'} onClick={() => done(true)}>{c?.action}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

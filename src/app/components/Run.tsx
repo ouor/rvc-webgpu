@@ -4,6 +4,7 @@ import { useNow } from '../lib/hooks';
 import { Activity, Boxes, Brain, Circle, CircleCheck, CircleDashed, CircleMinus, CircleX, Download as DownloadIcon, Info, Loader2, Lock, Recycle, Split, TriangleAlert } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
+import { Bar } from './Bar';
 import { InlineError } from './Notice';
 import { PlayButton, usePlayer } from './Player';
 import type { DownloadItem } from '@/shared/types';
@@ -57,15 +58,15 @@ export function ActionBar() {
         <div className="flex-1 min-w-0" id="bar-why">
           {loadingDl ? <>
             <p className="font-semibold">{t('dl.barLoading', { p: Math.floor((dl.done / Math.max(1, dl.total)) * 100) })}</p>
-            <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden max-w-md"><div className="h-full bg-primary rounded-full transition-[width] duration-300" style={{ width: `${(dl.done / Math.max(1, dl.total)) * 100}%` }} /></div>
+            <Bar className="mt-2 max-w-md" value={(dl.done / Math.max(1, dl.total)) * 100} label={t('dl.loadingTitle')} />
           </> : <>
             <p className="font-semibold flex items-center gap-2 flex-wrap">{title}</p>
             {sub && <div className="text-small text-muted-foreground mt-1">{sub}</div>}
           </>}
         </div>
         {loadingDl
-          ? <Button variant="secondary" className="h-10 rounded-lg" onClick={() => showDownload(true)}>{t('dl.show')}</Button>
-          : <Button className="h-12 px-7 rounded-xl text-lead font-semibold disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled={!!reason || !!dl}
+          ? <Button variant="secondary" onClick={() => showDownload(true)}>{t('dl.show')}</Button>
+          : <Button size="cta" disabled={!!reason || !!dl}
             aria-describedby={reason ? 'bar-why' : undefined} onClick={() => void start()}>{cta}</Button>}
       </div>
     </div>
@@ -90,9 +91,7 @@ function DlItem({ item, got, state, failed }: { item: DownloadItem; got: number;
           <span className="font-semibold truncate">{name} <span className="font-normal text-muted-foreground">{sub}</span></span>
           <span className="text-muted-foreground tnum shrink-0">{state === 'run' ? `${fmtBytes(got)} / ` : ''}{item.bytes < 1e6 ? t('dl.underMb') : fmtBytes(item.bytes)}</span>
         </div>
-        {state === 'run' && (pct >= 100
-          ? <div className="mt-1.5 h-1.5 rounded-full bg-muted overflow-hidden"><div className="h-full w-2/5 bg-primary rounded-full animate-indet" /></div>
-          : <div className="mt-1.5 h-1.5 rounded-full bg-muted overflow-hidden"><div className="h-full bg-primary rounded-full transition-[width] duration-300" style={{ width: `${pct}%` }} /></div>)}
+        {state === 'run' && <Bar className="mt-1.5" value={pct >= 100 ? undefined : pct} label={name} />}
         {state === 'run' && pct >= 100 && <p className="text-caption text-muted-foreground mt-1">{t('dl.verify')}</p>}
         {state === 'wait' && !failed && <p className="text-caption text-muted-foreground mt-0.5">{t('dl.waiting')}</p>}
         {failed && state !== 'done' && <p className="text-caption text-destructive mt-0.5">{t('dl.itemFailed')}</p>}
@@ -142,9 +141,7 @@ export function DownloadDialog() {
               <span className="font-semibold">{fmtBytes(dl.done)} / {fmtBytes(dl.total)}</span>
               <span className="text-muted-foreground">{left !== undefined ? t('dl.left', { t: fmtLeft(t, left) }) : t('eta.calc')}</span>
             </div>
-            <div className="h-2 rounded-full bg-muted overflow-hidden" role="progressbar" aria-label={t('dl.loadingTitle')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.floor((dl.done / Math.max(1, dl.total)) * 100)}>
-              <div className="h-full bg-primary rounded-full transition-[width] duration-300" style={{ width: `${(dl.done / Math.max(1, dl.total)) * 100}%` }} />
-            </div>
+            <Bar className="h-2" value={(dl.done / Math.max(1, dl.total)) * 100} label={t('dl.loadingTitle')} />
           </div>
         ) : (
           <div className="mt-4 flex justify-between text-body"><span className="text-muted-foreground">{t('dl.total')}</span><span className="font-bold tnum">{t('dl.about', { size: fmtBytes(dl.total) })}</span></div>
@@ -153,21 +150,21 @@ export function DownloadDialog() {
         {dl.error && dl.status === 'failed' && <InlineError className="mt-4" error={dl.error} />}
         <div className="mt-6 flex justify-end gap-2">
           {dl.status === 'confirm' && <>
-            <Button variant="ghost" className="h-10 rounded-lg" onClick={closeDownload}>{t('dl.later')}</Button>
-            <Button className="h-10 rounded-lg px-5" onClick={() => void startDownload()}>{t('dl.start')}</Button>
+            <Button variant="ghost" onClick={closeDownload}>{t('dl.later')}</Button>
+            <Button onClick={() => void startDownload()}>{t('dl.start')}</Button>
           </>}
-          {dl.status === 'loading' && <Button variant="secondary" className="h-10 rounded-lg" onClick={() => void stopDownload()}>{t('dl.stop')}</Button>}
+          {dl.status === 'loading' && <Button variant="secondary" onClick={() => void stopDownload()}>{t('dl.stop')}</Button>}
           {dl.status === 'failed' && <>
-            <Button variant="ghost" className="h-10 rounded-lg" onClick={closeDownload}>{t('common.close')}</Button>
-            <Button className="h-10 rounded-lg" onClick={() => void startDownload(true)}>{t('dl.retry')}</Button>
+            <Button variant="ghost" onClick={closeDownload}>{t('common.close')}</Button>
+            <Button onClick={() => void startDownload(true)}>{t('dl.retry')}</Button>
           </>}
           {dl.status === 'storage' && <>
-            <Button variant="ghost" className="h-10 rounded-lg" onClick={closeDownload}>{t('common.close')}</Button>
-            <Button className="h-10 rounded-lg" onClick={() => { closeDownload(); openSettings('storage'); }}>{t('dl.manage')}</Button>
+            <Button variant="ghost" onClick={closeDownload}>{t('common.close')}</Button>
+            <Button onClick={() => { closeDownload(); openSettings('storage'); }}>{t('dl.manage')}</Button>
           </>}
           {dl.status === 'offline' && <>
-            <Button variant="ghost" className="h-10 rounded-lg" onClick={closeDownload}>{t('common.close')}</Button>
-            <Button className="h-10 rounded-lg" onClick={() => void startDownload(true)}>{t('common.retry')}</Button>
+            <Button variant="ghost" onClick={closeDownload}>{t('common.close')}</Button>
+            <Button onClick={() => void startDownload(true)}>{t('common.retry')}</Button>
           </>}
         </div>
       </DialogContent>
@@ -218,11 +215,9 @@ function StepItem({ k, info, cancelling, rerunKeyOnly }: { k: Step; info: StepIn
       </div>
       <p className="text-caption mt-1 tnum truncate">{line}</p>
       {info.state === 'run' && !cancelling && (
-        <div className="mt-2 h-1.5 rounded-full bg-card overflow-hidden" role="progressbar" aria-label={name} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
-          <div className="h-full bg-primary rounded-full transition-[width] duration-300 ease-linear" style={{ width: `${pct}%` }} />
-        </div>
+        <Bar className="mt-2 bg-card" value={pct} label={name} />
       )}
-      {info.state === 'load' && !cancelling && <div className="mt-2 h-1.5 rounded-full bg-card overflow-hidden"><div className="h-full w-2/5 bg-primary rounded-full animate-indet" /></div>}
+      {info.state === 'load' && !cancelling && <Bar className="mt-2 bg-card" label={name} />}
       {k === 'separate' && (info.state === 'done' || info.state === 'reused') && <StemButtons />}
     </li>
   );
@@ -256,13 +251,13 @@ export function ProgressPanel() {
     : job.rerun ? t('prog.rerun') : job.mode === 'voice' ? t('prog.voice') : t('prog.song');
   const actions = err && (
     <>
-      {err.code === 'OOM' && <Button className="h-9 rounded-lg" onClick={() => void recover('low')}>{t('prog.lowMem')}</Button>}
-      {err.code === 'GPU_LOST' && <Button className="h-9 rounded-lg" onClick={() => void recover('wasm')}>{t('prog.useWasm')}</Button>}
-      {err.code === 'INDEX_DIM_MISMATCH' && <Button className="h-9 rounded-lg" onClick={() => void recover('noIndex')}>{t('index.without')}</Button>}
-      {err.code !== 'OOM' && <Button variant={err.code === 'GPU_LOST' || err.code === 'INDEX_DIM_MISMATCH' ? 'secondary' : 'default'} className="h-9 rounded-lg" onClick={() => void recover('retry')}>{t('common.retry')}</Button>}
-      {sepOk && <Button variant="secondary" className="h-9 rounded-lg" onClick={() => void exportSeparated()}><DownloadIcon className="size-4" />{t('prog.saveSeparated')}</Button>}
-      {err.code === 'INTERNAL' && <Button variant="secondary" className="h-9 rounded-lg" onClick={copyEnvInfo}>{t('about.copyEnv')}</Button>}
-      <Button variant="ghost" className="h-9 rounded-lg" onClick={() => void cancelJob()}>{t('common.close')}</Button>
+      {err.code === 'OOM' && <Button size="sm" onClick={() => void recover('low')}>{t('prog.lowMem')}</Button>}
+      {err.code === 'GPU_LOST' && <Button size="sm" onClick={() => void recover('wasm')}>{t('prog.useWasm')}</Button>}
+      {err.code === 'INDEX_DIM_MISMATCH' && <Button size="sm" onClick={() => void recover('noIndex')}>{t('index.without')}</Button>}
+      {err.code !== 'OOM' && <Button variant={err.code === 'GPU_LOST' || err.code === 'INDEX_DIM_MISMATCH' ? 'secondary' : 'default'} size="sm" onClick={() => void recover('retry')}>{t('common.retry')}</Button>}
+      {sepOk && <Button variant="secondary" size="sm" onClick={() => void exportSeparated()}><DownloadIcon className="size-4" />{t('prog.saveSeparated')}</Button>}
+      {err.code === 'INTERNAL' && <Button variant="secondary" size="sm" onClick={copyEnvInfo}>{t('about.copyEnv')}</Button>}
+      <Button variant="ghost" size="sm" onClick={() => void cancelJob()}>{t('common.close')}</Button>
     </>
   );
   return (
@@ -281,8 +276,8 @@ export function ProgressPanel() {
             <span className="sr-only" aria-live="polite">{job.current && t(`step.${job.current}`)}</span>
           </div>
           {!err && (job.status === 'cancelling'
-            ? <Button variant="secondary" disabled className="h-10 rounded-lg"><Loader2 className="animate-spin" />{t('prog.cancellingBtn')}</Button>
-            : <Button variant="secondary" className="h-10 rounded-lg" onClick={() => void cancelJob()}>{t('common.cancel')}</Button>)}
+            ? <Button variant="secondary" disabled><Loader2 className="animate-spin" />{t('prog.cancellingBtn')}</Button>
+            : <Button variant="secondary" onClick={() => void cancelJob()}>{t('common.cancel')}</Button>)}
         </div>
         {job.fallback && !err && (
           <div className="mt-3 flex items-start gap-2 rounded-lg bg-warning-soft px-3 py-2 text-small">
