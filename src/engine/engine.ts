@@ -2,13 +2,14 @@
 // No DOM here; storage and fetch are injected so the same code runs in vitest (Node).
 import { AppError, toAppError } from '../shared/errors';
 import { PUBLIC_IDS } from '../shared/types';
-import type { Backend, CacheEntry, Engine, ImportResult, JobResult, JobSpec, OnProgress, Stereo } from '../shared/types';
+import type { Backend, CacheEntry, Engine, ImportResult, JobResult, JobSpec, OnProgress, RvcModelInfo, Stereo } from '../shared/types';
 import { resample } from '../dsp/resample';
 import { configureOrt, pickBackend, probeGpu, releaseSession, type OrtSession } from '../models/ort';
 import { createSessionFromParts, tensorMap } from '../models/loader';
 import { loadRegistry, ModelRepo, type Opened, type PublicId, type Registry } from '../models/registry';
 import { MemoryStore, type BlobStore } from '../models/store';
 import { MyModelStore } from '../models/my-models';
+import { RecentJobStore } from '../models/recent-jobs';
 import { publicDir } from '../models/layout';
 import { CancelFlag, throttleProgress } from './ctx';
 import { JobRunner, type Stages } from './run';
@@ -20,7 +21,10 @@ import { extractFeatures, featDim } from './rvc/features';
 import { createOnnxNet, createTemplateNet, type RvcNet } from './rvc/net';
 
 /** Injection points for tests: storage, network, a registry in place of the bundled/fetched one, model stages. */
-export interface EngineDeps { store?: BlobStore; fetch?: typeof fetch; registry?: Registry; stages?: Partial<Stages> }
+export interface EngineDeps {
+  store?: BlobStore; fetch?: typeof fetch; registry?: Registry; stages?: Partial<Stages>;
+  estimate?: () => Promise<{ quota?: number; usage?: number } | undefined>; // storage estimate (tests fake the quota)
+}
 
 const MAX_SECONDS = 20 * 60; // IN-3 hard limit
 const MIN_SECONDS = 1; // shorter than the RMS window (0.5 s) and the 1 s chunk padding gives nothing usable (R1 M3)
@@ -35,6 +39,9 @@ export function createEngine(deps: EngineDeps = {}): Engine {
   const inputs = new Map<string, { audio: Stereo; inst?: Stereo }>(); // inst: setStemsInput (I-20)
   const lib = new Library((sig) => needRepo().templateFor(sig), () => !!active);
   const mine = new MyModelStore(() => store);
+  const recent = new RecentJobStore(() => store, deps.estimate);
+  // I-2: references to the last result (no copy); recent.save() writes them
+  let last: { spec: JobSpec; model: RvcModelInfo; result: JobResult } | undefined;
 
   const needRepo = () => { if (!repo) throw new AppError('INTERNAL', 'engine.init() not called'); return repo; };
 
@@ -209,11 +216,13 @@ export function createEngine(deps: EngineDeps = {}): Engine {
         const missing = (await needRepo().plan(requiredIds(job))).filter((d) => !d.cached);
         if (missing.length) throw new AppError('MODELS_MISSING', 'public models not downloaded', missing.map((d) => d.id).join(','), true);
         try {
-          return await runOnce(job, job.convert.chunkProfile, on, cancel);
+          return (last = { spec: job, model: lib.model(job.modelId).info, result: await runOnce(job, job.convert.chunkProfile, on, cancel) }).result;
         } catch (e) {
           // §9.2-3: one automatic retry with the low-memory chunk profile
           const a = toAppError(e); // JS allocation failures count too (R1 M2)
-          if (a.code === 'OOM' && job.convert.chunkProfile === 'normal') return await runOnce(job, 'low', on, cancel);
+          if (a.code === 'OOM' && job.convert.chunkProfile === 'normal') {
+            return (last = { spec: job, model: lib.model(job.modelId).info, result: await runOnce(job, 'low', on, cancel) }).result;
+          }
           throw a;
         }
       } catch (e) {
@@ -241,6 +250,8 @@ export function createEngine(deps: EngineDeps = {}): Engine {
           if (bytes) out.push({ id, name: r.label(id), bytes, kind: 'public', status: complete ? 'verified' : 'incomplete' });
         }
         for (const m of await mine.sizes()) out.push({ id: m.id, name: m.name, bytes: m.bytes, kind: 'my-model', status: m.complete ? 'verified' : 'incomplete' });
+        const rb = await recent.bytes();
+        if (rb) out.push({ id: 'recent', name: 'recent jobs', bytes: rb, kind: 'recent', status: 'verified' });
         return out;
       },
       async verify(id) {
@@ -260,9 +271,27 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       async remove(id) { // public model id or my-model id, as cache.list() returns them
         const r = needRepo();
         if (r.ids().includes(id)) { for (const f of r.files(id)) await store.remove(publicDir(r.reg.revision) + f); }
+        else if (id === 'recent') await recent.clear();
         else await engine.myModels.remove(id);
       },
       async clear() { await store.remove('public'); },
+    },
+
+    recent: {
+      async save({ songName, songSeconds, appVersion, mix }) {
+        if (!last) throw new AppError('NOT_FOUND', 'no finished run to save');
+        const { spec, model, result } = last;
+        return recent.save({
+          appVersion, mode: spec.mode, song: { name: songName, durationSec: songSeconds, range: spec.range },
+          model: { id: model.id, name: model.name, version: model.version, sr: model.sr, f0: model.f0, indexId: spec.indexId },
+          convert: spec.convert, separate: spec.mode === 'song' ? spec.separate : undefined, mix,
+        }, result);
+      },
+      list: () => recent.list(),
+      open: (id) => recent.open(id),
+      updateMix: (id, mix) => recent.updateMix(id, mix),
+      remove: (id) => recent.remove(id),
+      clear: () => recent.clear(),
     },
 
     myModels: {

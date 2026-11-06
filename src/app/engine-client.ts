@@ -17,6 +17,7 @@ export function createEngineClient(): EngineClient {
   // Comlink proxies nested objects at runtime; its types model them as promises, hence the casts.
   const cache = r.cache as unknown as Comlink.Remote<Engine['cache']>;
   const mine = r.myModels as unknown as Comlink.Remote<Engine['myModels']>;
+  const rec = r.recent as unknown as Comlink.Remote<Engine['recent']>;
   return {
     init: (o) => r.init(o),
     setInput: (audio, meta) => r.setInput(Comlink.transfer(audio, [audio.l.buffer, audio.r.buffer]), meta),
@@ -32,6 +33,10 @@ export function createEngineClient(): EngineClient {
     cache: {
       list: () => cache.list(), verify: (id) => cache.verify(id), importFiles: (files) => cache.importFiles(files),
       remove: (id) => cache.remove(id), clear: () => cache.clear(),
+    },
+    recent: {
+      save: (m) => rec.save(m), list: () => rec.list(), open: (id) => rec.open(id),
+      updateMix: (id, mix) => rec.updateMix(id, mix), remove: (id) => rec.remove(id), clear: () => rec.clear(),
     },
     myModels: {
       save: (id, ix) => mine.save(id, ix), list: () => mine.list(),

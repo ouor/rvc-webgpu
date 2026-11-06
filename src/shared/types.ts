@@ -104,7 +104,30 @@ export interface DownloadItem { id: string; label: string; bytes: number; cached
  * and is checked again on every load), 'incomplete' = a file is missing or partially downloaded.
  * cache.verify(id) re-hashes now and can also return 'corrupt' (bad files are deleted).
  */
-export interface CacheEntry { id: string; name: string; bytes: number; kind: 'public' | 'my-model'; status: 'verified' | 'incomplete' | 'corrupt' }
+export interface CacheEntry { id: string; name: string; bytes: number; kind: 'public' | 'my-model' | 'recent'; status: 'verified' | 'incomplete' | 'corrupt' }
+
+/** Mix settings kept with a recent job (same fields as audio/mixer MixParams, without the playback-only solo). */
+export interface RecentMix { vocalGainDb: number; instGainDb: number; reverb: number; muteVocal?: boolean; muteInst?: boolean }
+export type RecentStem = 'converted' | 'vocals' | 'inst';
+/** recent/<id>/job.json, version 1 (ARCHITECTURE 18.2). */
+export interface RecentJob {
+  v: 1;
+  id: string;
+  createdAt: number;
+  appVersion: string;
+  mode: JobSpec['mode'];
+  song: { name: string; durationSec: number; range?: { start: number; end: number } };
+  model: { id: string; name: string; version: 'v1' | 'v2'; sr: number; f0: boolean; indexId?: string };
+  convert: ConvertParams;
+  separate?: SeparateParams; // song mode only
+  mix: RecentMix;
+  /** scale: the file holds samples x scale (0.999 / peak when the peak was above 1.0); open() divides it out. */
+  files: Partial<Record<RecentStem, { file: string; sr: number; channels: 1 | 2; frames: number; scale: number; bytes: number }>>;
+}
+export interface RecentSummary {
+  id: string; createdAt: number; songName: string; modelName: string; mode: JobSpec['mode'];
+  f0UpKey: number; range?: { start: number; end: number }; bytes: number;
+}
 
 /** myModels.list() entry: the model info plus when it was saved and last opened (ms since epoch). */
 export interface SavedModel extends RvcModelInfo { savedAt: number; lastUsed: number }
@@ -135,6 +158,16 @@ export interface Engine {
   /** Stems of the last separation (available as soon as the separate stage finishes, also during run). */
   getStems(): Promise<{ vocals: Stereo; instrumental: Stereo } | null>;
   cancel(): void;
+  /** I-2: results of finished runs kept on this device (at most 3). */
+  recent: {
+    /** Saves the last run() result. The UI calls it only while its "save recent jobs" switch is on. */
+    save(meta: { songName: string; songSeconds: number; appVersion: string; mix: RecentMix }): Promise<{ id: string } | { skipped: 'quota' }>;
+    list(): Promise<RecentSummary[]>;
+    open(id: string): Promise<{ job: RecentJob; converted: Mono; vocals?: Stereo; instrumental?: Stereo }>;
+    updateMix(id: string, mix: RecentMix): Promise<void>;
+    remove(id: string): Promise<void>;
+    clear(): Promise<void>;
+  };
   cache: {
     list(): Promise<CacheEntry[]>;
     /** Full SHA-256 check of one item now (public or my-model id). */

@@ -16,3 +16,9 @@ export const myModelFile = (id: string, kind: 'pth' | 'onnx' | 'index' | 'info')
   `${myModelDir(id)}/${kind === 'info' ? 'info.json' : `model.${kind}`}`;
 /** my-model id of a stored path under my-models/, or undefined. */
 export const myModelIdOf = (storedPath: string) => (storedPath.startsWith(MY_MODELS_ROOT + '/') ? storedPath.split('/')[1] : undefined);
+
+//   recent/<id>/{job.json, converted.wav, vocals.wav, inst.wav}   recent jobs (I-2); job.json is written last
+export const RECENT_ROOT = 'recent';
+export const isRecentId = (id: string) => /^[0-9a-z]{6,12}-[0-9a-z]{4}$/.test(id);
+export const recentDir = (id: string) => `${RECENT_ROOT}/${id}`;
+export const recentFile = (id: string, kind: 'job' | 'converted' | 'vocals' | 'inst') => `${recentDir(id)}/${kind === 'job' ? 'job.json' : `${kind}.wav`}`;
