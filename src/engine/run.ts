@@ -26,6 +26,7 @@ export interface Stages {
 export interface Job {
   spec: JobSpec;
   audio: Stereo; // already cropped to spec.range
+  stems?: Stems; // mode 'stems': the user's stems, cropped like audio
   model: RvcModelInfo;
   index?: { id: string; index: IvfIndex };
   profile: ConvertParams['chunkProfile'];
@@ -43,7 +44,7 @@ export class JobRunner {
   /** Stems of the last separation. */
   get stems(): Stems | undefined { return this.sep && { vocals: this.sep.vocals, instrumental: this.sep.instrumental }; }
 
-  async run({ spec, audio, model, index, profile }: Job, on: OnProgress, cancel: CancelFlag): Promise<JobResult> {
+  async run({ spec, audio, stems: given, model, index, profile }: Job, on: OnProgress, cancel: CancelFlag): Promise<JobResult> {
     const dim = featDim(model.version);
     if (index && index.index.d !== dim) {
       throw new AppError('INDEX_DIM_MISMATCH', `index dimension ${index.index.d}, ${model.version} model needs ${dim}`, undefined, true);
@@ -65,8 +66,15 @@ export class JobRunner {
 
     let source = audio;
     let sepKey = 'voice';
-    let stems: Stems | undefined; // only song mode returns stems (R1 H2)
-    if (spec.mode === 'song') {
+    let stems: Stems | undefined; // only song and stems mode return stems (R1 H2)
+    if (spec.mode === 'stems') {
+      if (!given) throw new AppError('NOT_FOUND', `input ${spec.inputId} has no stems (use setStemsInput)`);
+      sepKey = `stems|${spec.inputId}|${rangeKey}`;
+      if (this.sep?.key !== sepKey) this.sep = { key: sepKey, ...given };
+      on({ stage: 'separate', done: 1, total: 1, skipped: true });
+      stems = this.stems!;
+      source = stems.vocals;
+    } else if (spec.mode === 'song') {
       sepKey = `${spec.inputId}|${rangeKey}|${spec.separate.modelId}|${spec.separate.aggressiveness}`;
       if (this.sep?.key === sepKey) reuse('separate');
       else {

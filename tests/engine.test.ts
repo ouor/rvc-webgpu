@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { createEngine, type EngineDeps } from '../src/engine/engine';
 import type { Stages } from '../src/engine/run';
+import { throttleProgress } from '../src/engine/ctx';
 import { changeRms } from '../src/dsp/rms';
 import { MemoryStore, sha256Hex } from '../src/models/store';
 import { AppError } from '../src/shared/errors';
@@ -189,6 +190,21 @@ describe('engine run (fake stages)', () => {
     expect(v.vocals).toBeUndefined();
   });
 
+  it('stems mode: no separation, padded stems come back, no separator needed (I-20)', async () => {
+    const { engine, job } = await ready();
+    const sr = 16000, v = new Float32Array(3 * sr).fill(0.2), i = new Float32Array(2 * sr).fill(0.1);
+    const inputId = await engine.setStemsInput({ sr, l: v, r: v.slice() }, { sr, l: i, r: i.slice() }, { name: 's', size: 1, lastModified: 1 });
+    const ev: Progress[] = [];
+    const r = await engine.run(job({ inputId, mode: 'stems' }), (p) => ev.push(p));
+    expect(calls.separate).toBe(0);
+    expect(ev.find((p) => p.stage === 'separate')).toMatchObject({ skipped: true });
+    expect(r.instrumental!.l.length).toBe(3 * sr);
+    expect(r.instrumental!.l[2 * sr]).toBe(0);
+    expect((await engine.plan(job({ inputId, mode: 'stems' }))).map((d) => d.id)).not.toContain('uvr-hp-vocal');
+    const plain = await engine.setInput({ sr, l: v, r: v.slice() }, { name: 'p', size: 1, lastModified: 1 });
+    await expect(engine.run(job({ inputId: plain, mode: 'stems' }), () => {})).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('rejects an index of the wrong dimension before separating (H1)', async () => {
     const { engine, job } = await ready();
     const ix = await engine.loadIndex(new File([fakeFlatIndex(256, 4)], 'v1.index'));
@@ -253,6 +269,22 @@ describe('engine run (fake stages)', () => {
     const m = await engine.loadRvcModel(new File([await fakeRvcPth()], 'k.pth'));
     await expect(engine.run({ inputId: id, mode: 'voice', separate: DEFAULT_SEPARATE, modelId: m.id, convert: DEFAULT_CONVERT }, () => {}))
       .rejects.toMatchObject({ code: 'MODELS_MISSING' });
+  });
+});
+
+describe('throttleProgress (QA B1)', () => {
+  it('passes step changes and the end at once, rate-limits the rest, delivers the last dropped event', async () => {
+    const got: Progress[] = [];
+    const on = throttleProgress((p) => got.push(p), 50);
+    on({ stage: 'download', done: 0, total: 1000, file: 'a' });
+    for (let i = 1; i < 500; i++) on({ stage: 'download', done: i, total: 1000, file: 'a' });
+    on({ stage: 'download', done: 0, total: 10, file: 'b' }); // new file: immediate
+    for (let i = 1; i < 9; i++) on({ stage: 'download', done: i, total: 10, file: 'b' });
+    expect(got.map((p) => `${p.file}${p.done}`)).toEqual(['a0', 'b0']);
+    await new Promise((r) => setTimeout(r, 80));
+    expect(got.at(-1)).toMatchObject({ file: 'b', done: 8 }); // trailing
+    on({ stage: 'download', done: 10, total: 10, file: 'b' });
+    expect(got.at(-1)!.done).toBe(10);
   });
 });
 

@@ -3,7 +3,11 @@
 //                 \-> convolver -> wetGain -/
 import { createReverbIR } from './reverb';
 
-export interface MixParams { vocalGainDb: number; instGainDb: number; reverb: number /* 0..1 */ }
+export interface MixParams {
+  vocalGainDb: number; instGainDb: number; reverb: number /* 0..1 */;
+  muteVocal?: boolean; muteInst?: boolean; // I-17: in playback and in the rendered mix
+  solo?: 'vocal' | 'inst';                 // I-17: playback only (renderMix ignores it)
+}
 export interface Stems { vocal: AudioBuffer; inst?: AudioBuffer }
 export const DEFAULT_MIX: MixParams = { vocalGainDb: 0, instGainDb: 0, reverb: 0 };
 
@@ -24,10 +28,11 @@ function buildGraph(ctx: BaseAudioContext, ir: AudioBuffer): Graph {
   return { vocalGain, instGain, wetGain, master };
 }
 
-function apply(g: Graph, p: MixParams, at?: number) {
+function apply(g: Graph, p: MixParams, at?: number, live = false) {
   const set = (n: GainNode, v: number) => (at === undefined ? (n.gain.value = v) : n.gain.setTargetAtTime(v, at, 0.03));
-  set(g.vocalGain, db(p.vocalGainDb));
-  set(g.instGain, db(p.instGainDb));
+  const solo = live ? p.solo : undefined;
+  set(g.vocalGain, p.muteVocal || solo === 'inst' ? 0 : db(p.vocalGainDb)); // the reverb send follows the vocal
+  set(g.instGain, p.muteInst || solo === 'vocal' ? 0 : db(p.instGainDb));
   set(g.wetGain, p.reverb * 0.6); // 100 % reverb = wet at -4.4 dB under the dry vocal
 }
 
@@ -51,12 +56,12 @@ export class MixPlayer {
     this.offset = 0;
     this.stems = stems;
     this.graph ??= buildGraph(this.ctx, createReverbIR(this.ctx));
-    apply(this.graph, this.params);
+    apply(this.graph, this.params, undefined, true);
   }
 
   set(p: MixParams): void {
     this.params = p;
-    if (this.graph) apply(this.graph, p, this.ctx.currentTime); // ~30 ms time constant, well under 0.2 s
+    if (this.graph) apply(this.graph, p, this.ctx.currentTime, true); // ~30 ms time constant, well under 0.2 s
   }
 
   get duration(): number { return this.stems ? mixLength(this.stems, this.ctx.sampleRate) / this.ctx.sampleRate : 0; }

@@ -10,7 +10,7 @@ import { loadRegistry, ModelRepo, type Opened, type PublicId, type Registry } fr
 import { MemoryStore, type BlobStore } from '../models/store';
 import { MyModelStore } from '../models/my-models';
 import { publicDir } from '../models/layout';
-import { CancelFlag } from './ctx';
+import { CancelFlag, throttleProgress } from './ctx';
 import { JobRunner, type Stages } from './run';
 import { Library, type LoadedModel } from './library';
 import { checkVrParams, separateVR, type VrBandParams } from './separate/vr';
@@ -32,7 +32,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
   let backend: Backend = 'wasm';
   let active: CancelFlag | undefined; // the running job or download; one at a time, each with its own flag (R1 M5)
 
-  const inputs = new Map<string, Stereo>();
+  const inputs = new Map<string, { audio: Stereo; inst?: Stereo }>(); // inst: setStemsInput (I-20)
   const lib = new Library((sig) => needRepo().templateFor(sig), () => !!active);
   const mine = new MyModelStore(() => store);
 
@@ -112,7 +112,16 @@ export function createEngine(deps: EngineDeps = {}): Engine {
     if (!input) throw new AppError('NOT_FOUND', `unknown input ${job.inputId}`);
     const model = lib.model(job.modelId);
     const index = job.indexId ? lib.index(job.indexId) : undefined;
-    return runner.run({ spec: job, audio: crop(input, job.range), model: model.info, index: index && { id: job.indexId!, index: index.index }, profile }, on, cancel);
+    const audio = crop(input.audio, job.range);
+    const stems = input.inst && { vocals: audio, instrumental: crop(input.inst, job.range) };
+    return runner.run({ spec: job, audio, stems, model: model.info, index: index && { id: job.indexId!, index: index.index }, profile }, on, cancel);
+  }
+
+  function keepInput(input: { audio: Stereo; inst?: Stereo }, id: string): string {
+    if (input.audio.l.length / input.audio.sr > MAX_SECONDS) throw new AppError('AUDIO_TOO_LONG', `input longer than ${MAX_SECONDS} s`);
+    if (!inputs.has(id)) { inputs.clear(); runner.clear(); } // one input at a time (memory)
+    inputs.set(id, input);
+    return id;
   }
 
   const engine: Engine = {
@@ -136,12 +145,18 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       };
     },
 
-    async setInput(audio, meta) {
-      if (audio.l.length / audio.sr > MAX_SECONDS) throw new AppError('AUDIO_TOO_LONG', `input longer than ${MAX_SECONDS} s`);
-      const id = `${meta.name}|${meta.size}|${meta.lastModified}|${audio.l.length}`;
-      if (!inputs.has(id)) { inputs.clear(); runner.clear(); } // one input at a time (memory)
-      inputs.set(id, audio);
-      return id;
+    async setInput(audio, meta) { return keepInput({ audio }, `${meta.name}|${meta.size}|${meta.lastModified}|${audio.l.length}`); },
+
+    async setStemsInput(vocals, inst, meta) {
+      if (vocals.sr !== inst.sr) throw new AppError('INTERNAL', `stems at ${vocals.sr} and ${inst.sr} Hz`);
+      const n = Math.max(vocals.l.length, inst.l.length);
+      const pad = (a: Stereo): Stereo => {
+        if (a.l.length === n) return a;
+        const l = new Float32Array(n), r = new Float32Array(n);
+        l.set(a.l); r.set(a.r);
+        return { sr: a.sr, l, r };
+      };
+      return keepInput({ audio: pad(vocals), inst: pad(inst) }, `stems|${meta.name}|${meta.size}|${meta.lastModified}|${n}`);
     },
 
     loadRvcModel: (file) => lib.loadModel(file, file.name),
@@ -157,7 +172,8 @@ export function createEngine(deps: EngineDeps = {}): Engine {
 
     async plan(job) { return needRepo().plan(requiredIds(job)); },
 
-    download: (ids, on) => exclusive(async (cancel) => {
+    download: (ids, onAll) => exclusive(async (cancel) => {
+      const on = throttleProgress(onAll);
       const r = needRepo();
       const owner = new Map<string, string>(); // file -> first item that needs it
       for (const id of ids) for (const f of r.files(id)) if (!owner.has(f)) owner.set(f, id);
@@ -187,7 +203,8 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       on({ stage: 'download', done: total, total });
     }),
 
-    run: (job, on) => exclusive(async (cancel) => {
+    run: (job, onAll) => exclusive(async (cancel) => {
+      const on = throttleProgress(onAll);
       try {
         const missing = (await needRepo().plan(requiredIds(job))).filter((d) => !d.cached);
         if (missing.length) throw new AppError('MODELS_MISSING', 'public models not downloaded', missing.map((d) => d.id).join(','), true);

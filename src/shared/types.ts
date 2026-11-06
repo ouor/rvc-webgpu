@@ -20,6 +20,7 @@ export interface Progress {
   itemDone?: number;
   itemTotal?: number;
   reused?: boolean; // skipped thanks to the F2 cache
+  skipped?: boolean; // separate stage in 'stems' mode: the user gave the stems (I-20)
   backend?: Backend;
 }
 
@@ -80,7 +81,8 @@ export interface SeparateParams { modelId: typeof PUBLIC_IDS.separator; aggressi
 export interface JobSpec {
   inputId: string;
   range?: { start: number; end: number }; // seconds
-  mode: 'song' | 'voice';
+  /** song = separate then convert; voice = convert the input as is; stems = input from setStemsInput, no separation (I-20). */
+  mode: 'song' | 'voice' | 'stems';
   separate: SeparateParams;
   modelId: string;
   indexId?: string;
@@ -122,6 +124,8 @@ export type OnProgress = (p: Progress) => void;
 export interface Engine {
   init(opts: { backend: BackendPref; modelBaseUrl: string }): Promise<EnvReport>;
   setInput(audio: Stereo, meta: { name: string; size: number; lastModified: number }): Promise<string>;
+  /** I-20: already separated vocal + instrumental (44.1 kHz). The shorter one is padded with silence. For mode 'stems'. */
+  setStemsInput(vocals: Stereo, instrumental: Stereo, meta: { name: string; size: number; lastModified: number }): Promise<string>;
   loadRvcModel(file: File): Promise<RvcModelInfo>;
   setOnnxModelSr(modelId: string, sr: 32000 | 40000 | 48000): Promise<void>;
   loadIndex(file: File): Promise<IndexInfo>;

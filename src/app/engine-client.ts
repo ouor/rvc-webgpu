@@ -3,8 +3,8 @@ import * as Comlink from 'comlink';
 import { installErrorTransfer } from '../shared/rpc';
 import type { Engine, JobSpec, OnProgress, Stereo } from '../shared/types';
 
-export type EngineClient = Omit<Engine, 'cancel' | 'setInput'> & {
-  /** Transfers the sample buffers to the worker (they are detached here afterwards). */
+export type EngineClient = Omit<Engine, 'cancel'> & {
+  /** setInput / setStemsInput transfer the sample buffers to the worker (they are detached here afterwards). */
   setInput(audio: Stereo, meta: { name: string; size: number; lastModified: number }): Promise<string>;
   cancel(): Promise<void>;
   terminate(): void;
@@ -20,6 +20,7 @@ export function createEngineClient(): EngineClient {
   return {
     init: (o) => r.init(o),
     setInput: (audio, meta) => r.setInput(Comlink.transfer(audio, [audio.l.buffer, audio.r.buffer]), meta),
+    setStemsInput: (v, i, meta) => r.setStemsInput(v, Comlink.transfer(i, [v.l.buffer, v.r.buffer, i.l.buffer, i.r.buffer]), meta),
     loadRvcModel: (f) => r.loadRvcModel(f),
     setOnnxModelSr: (id, sr) => r.setOnnxModelSr(id, sr),
     loadIndex: (f) => r.loadIndex(f),
