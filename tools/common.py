@@ -21,7 +21,8 @@ VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
 sys.path.insert(0, os.path.join(VENDOR, "rvc"))      # infer_pack, rmvpe (rvc-nano)
 sys.path.insert(0, VENDOR)                           # uvr
 
-EXTERNAL_DATA = "weights.bin"
+CONTRACT = json.load(open(os.path.join(ROOT, "src", "models", "contract.json"), encoding="utf-8"))  # tools <-> src (17)
+EXTERNAL_DATA = CONTRACT["externalData"]
 OPSET = 17
 
 

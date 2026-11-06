@@ -13,13 +13,8 @@ import json
 import os
 import shutil
 
-from common import DIST, ROOT
+from common import CONTRACT, DIST, ROOT
 
-PUBLIC = {  # model id -> (folder, basename)
-    "contentvec": ("contentvec", "contentvec"),
-    "rmvpe": ("rmvpe", "rmvpe"),
-    "uvr-hp-vocal": ("uvr", "uvr-hp-vocal"),
-}
 REGISTRY = "registry.json"
 
 
@@ -47,15 +42,17 @@ def build_registry(revision):
            "files": {f: {"bytes": os.path.getsize(os.path.join(DIST, f)), "sha256": sha256(os.path.join(DIST, f))}
                      for f in files},
            "models": {}, "rvcTemplates": {}}
-    for mid, (folder, base) in PUBLIC.items():
-        entry = {k: f"{folder}/{base}.{ext}" for k, ext in (("graph", "onnx"), ("weights", "pth"), ("manifest", "manifest.json"))}
-        if mid == "uvr-hp-vocal":
-            entry["params"] = json.load(open(os.path.join(DIST, entry["manifest"])))["meta"]["params"]
+    for mid, spec in CONTRACT["public"].items():
+        base = spec["files"]
+        entry = {"graph": base + ".onnx", "weights": base + ".pth", "manifest": base + ".manifest.json"}
+        if "params" in spec:
+            entry["params"] = spec["params"]
         reg["models"][mid] = entry
     for f in files:
         if f.startswith("rvc/") and f.endswith(".manifest.json"):
             man = json.load(open(os.path.join(DIST, f)))
-            reg["rvcTemplates"][man["meta"]["signature"]] = {"id": man["id"], "graph": f"rvc/{man['id']}.onnx", "manifest": f}
+            base = CONTRACT["template"]["files"].replace("{id}", man["id"])
+            reg["rvcTemplates"][man["meta"]["signature"]] = {"id": man["id"], "graph": base + ".onnx", "manifest": base + ".manifest.json"}
     missing = [p for e in reg["models"].values() for k, p in e.items() if p not in reg["files"]]
     missing += [p for e in reg["rvcTemplates"].values() for p in (e["graph"], e["manifest"]) if p not in reg["files"]]
     assert not missing, f"run the export scripts first, missing: {missing}"

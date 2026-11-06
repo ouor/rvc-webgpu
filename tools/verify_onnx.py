@@ -194,60 +194,52 @@ def check_pth_reader():
         errors = check_pth(dist(mid, name + ".pth"), dist(mid, name + ".manifest.json"))
         report(f"pth {name}", errors=len(errors), first=errors[0] if errors else "-", ok=not errors)
 
-# 17.3 graph I/O and file names. Not in src/models/contract.ts yet; move them there and parse like the rest.
-CONTRACT_IO = {
-    "contentvec": (["source"], ["feats768", "feats256"]),
-    "rmvpe": (["audio"], ["hidden"]),
-    "uvr-hp-vocal": (["x"], ["mask"]),
-    "f0": (["phone", "phone_lengths", "pitch", "pitchf", "g", "rnd", "noise", "phase"], ["audio"]),
-    "nof0": (["phone", "phone_lengths", "g", "rnd"], ["audio"]),
-}
-CONTRACT_FILES = {"contentvec": "contentvec/contentvec", "rmvpe": "rmvpe/rmvpe", "uvr-hp-vocal": "uvr/uvr-hp-vocal"}
-
-
-def read_ts_contract():
-    """Values from src/models/contract.ts + shared/types.ts (the single source, R3 A7). Fails if the shape changed."""
-    import re
-    src = os.path.join(ROOT, "src")
-    c = open(os.path.join(src, "models", "contract.ts"), encoding="utf-8").read()
-    t = open(os.path.join(src, "shared", "types.ts"), encoding="utf-8").read()
-    one = lambda pat, text: re.search(pat, text, re.S).group(1)  # AttributeError = contract.ts no longer parses here
-    rules = one(r"const RULES\b.*?\} = \{(.*?)\r?\n\};", c)
-    kinds = dict(re.findall(r"^\s*'?([\w-]+)'?:\s*\{(.*?)\},?\s*$", rules, re.S | re.M))
-    return {"manifestFormat": int(one(r"MANIFEST_FORMAT = (\d+)", c)),
-            "registryFormat": int(one(r"REGISTRY_FORMAT = (\d+)", c)),
-            "externalData": one(r"externalData: '([^']+)'", c),
-            "publicIds": re.findall(r"'([\w-]+)'", one(r"PUBLIC_IDS = \{([^}]*)\}", t)),
-            "meta": {k: re.findall(r"(\w+):", v) for k, v in kinds.items()}}
-
-
 def check_contract():
-    """Manifests and registry in weights/dist against contract.ts, then the app's own test (tests/contract.test.ts)."""
-    ts = read_ts_contract()
-    reg = json.load(open(dist("registry.json"), encoding="utf-8"))
+    """weights/dist against src/models/contract.json (the single source, R3 A7), then tests/contract.test.ts."""
+    import onnx
+    from common import CONTRACT
+
+    c, reg = CONTRACT, json.load(open(dist("registry.json"), encoding="utf-8"))
+    dtypes = {onnx.TensorProto.FLOAT: "float32", onnx.TensorProto.INT64: "int64"}
     errors = []
     err = lambda cond, msg: errors.append(msg) if not cond else None
-    err(reg["format"] == ts["registryFormat"], f"registry format {reg['format']}")
-    err(sorted(reg["models"]) == sorted(ts["publicIds"]), f"registry models {sorted(reg['models'])} != {ts['publicIds']}")
-    err(set(ts["meta"]) == set(ts["publicIds"]) | {"template"}, f"contract.ts RULES kinds {sorted(ts['meta'])}")
-    entries = [(mid, reg["models"][mid]["manifest"], mid) for mid in ts["publicIds"] if mid in reg["models"]]
-    entries += [(t["id"], t["manifest"], "template") for t in reg["rvcTemplates"].values()]
-    for mid, path, kind in entries:
-        man = json.load(open(dist(path), encoding="utf-8"))
-        err(man["format"] == ts["manifestFormat"] and man["externalData"] == ts["externalData"] and man["id"] == mid, f"{path} header")
-        err(not [k for k in ts["meta"][kind] if k not in man["meta"]], f"{path} meta lacks {[k for k in ts['meta'][kind] if k not in man['meta']]}")
-        io = CONTRACT_IO[kind if kind != "template" else ("f0" if man["meta"]["f0"] else "nof0")]
-        err(([i["name"] for i in man["inputs"]], [o["name"] for o in man["outputs"]]) == io, f"{path} io names")
-        base = CONTRACT_FILES.get(mid, f"rvc/{mid}")
-        err(path == base + ".manifest.json", f"{path} file name")
-        if kind != "template":
-            err(reg["models"][mid]["graph"] == base + ".onnx" and reg["models"][mid]["weights"] == base + ".pth", f"{mid} files")
-    report("contract (contract.ts)", errors=len(errors), first=errors[0] if errors else "-", ok=not errors)
+    err(list(reg) == c["registryKeys"] and reg["format"] == c["registryFormat"], "registry keys/format")
+    err(sorted(reg["models"]) == sorted(c["public"]), f"registry models {sorted(reg['models'])}")
+
+    def meta_ok(rules, meta):
+        types = {"number": (int, float), "boolean": bool, "string": str}
+        return [k for k, r in rules.items() if not (meta.get(k) in r if isinstance(r, list) else
+                                                    isinstance(meta.get(k), types[r]) and not (r == "number" and isinstance(meta.get(k), bool)))]
+
+    def check(base, spec, ins, outs, meta_rules, mid):
+        man = json.load(open(dist(base + ".manifest.json"), encoding="utf-8"))
+        err(list(man) == c["manifestKeys"] and man["format"] == c["manifestFormat"]
+            and man["externalData"] == c["externalData"] and man["id"] == mid, f"{base} manifest header")
+        err(not meta_ok(meta_rules, man["meta"]), f"{base} meta {meta_ok(meta_rules, man['meta'])}")
+        io = lambda xs: [{"name": x["name"], "dtype": x["dtype"]} for x in xs]
+        err(io(man["inputs"]) == ins and io(man["outputs"]) == outs, f"{base} manifest io")
+        g = onnx.load(dist(base + ".onnx"), load_external_data=False).graph
+        gio = lambda xs: [{"name": x.name, "dtype": dtypes.get(x.type.tensor_type.elem_type)} for x in xs]
+        err(gio(g.input) == ins and gio(g.output) == outs, f"{base} graph io")
+
+    for mid, spec in c["public"].items():
+        m = reg["models"].get(mid, {})
+        want = {"graph": spec["files"] + ".onnx", "weights": spec["files"] + ".pth", "manifest": spec["files"] + ".manifest.json"}
+        if "params" in spec:
+            want["params"] = spec["params"]
+        err(m == want, f"registry models.{mid} {m}")
+        check(spec["files"], spec, spec["inputs"], spec["outputs"], spec["meta"], mid)
+    t = c["template"]
+    for sig, e in reg["rvcTemplates"].items():
+        base = t["files"].replace("{id}", e["id"])
+        err(e == {"id": e["id"], "graph": base + ".onnx", "manifest": base + ".manifest.json"}, f"rvcTemplates {e}")
+        f0 = json.load(open(dist(base + ".manifest.json"), encoding="utf-8"))["meta"]["f0"]
+        check(base, t, t["inputs"]["f0" if f0 else "nof0"], t["outputs"], t["meta"], e["id"])
+    report("contract (contract.json)", errors=len(errors), first=errors[0] if errors else "-", ok=not errors)
     npx = "npx.cmd" if os.name == "nt" else "npx"
     r = subprocess.run([npx, "vitest", "run", "tests/contract.test.ts"], cwd=ROOT, capture_output=True, text=True)
     tail = (r.stdout + r.stderr).strip().splitlines()[-4:]
     report("contract (tests/contract.test.ts)", exit=r.returncode, summary=" | ".join(x.strip() for x in tail), ok=r.returncode == 0)
-
 
 if __name__ == "__main__":
     checks = {"contentvec": check_contentvec, "rmvpe": check_rmvpe, "uvr": check_uvr, "rvc": check_rvc, "rvc-long": check_rvc_long,
