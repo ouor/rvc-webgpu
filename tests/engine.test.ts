@@ -198,7 +198,7 @@ describe('engine run (fake stages)', () => {
 
   it('rejects ranges under 1 s (M3)', async () => {
     const { engine, job } = await ready();
-    await expect(engine.run(job({ range: { start: 1, end: 1.3 } }), () => {})).rejects.toMatchObject({ detail: 'AUDIO_TOO_SHORT' });
+    await expect(engine.run(job({ range: { start: 1, end: 1.3 } }), () => {})).rejects.toMatchObject({ code: 'AUDIO_TOO_SHORT' });
   });
 
   it('retries once with the low chunk profile on OOM', async () => {

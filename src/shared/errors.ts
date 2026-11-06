@@ -1,7 +1,7 @@
 // Error model (ARCHITECTURE §10). `message` is developer English; UI text comes from i18n keyed by `code`.
 
 export type ErrorCode =
-  | 'AUDIO_DECODE' | 'AUDIO_TOO_LONG'
+  | 'AUDIO_DECODE' | 'AUDIO_TOO_LONG' | 'AUDIO_TOO_SHORT'
   | 'PTH_NOT_ZIP' | 'PTH_UNSAFE' | 'PTH_CORRUPT' | 'PTH_TRAINING_CKPT'
   | 'PTH_UNSUPPORTED_ARCH' | 'PTH_UNSUPPORTED_VOCODER' | 'PTH_UNSUPPORTED_EMBEDDER'
   | 'ONNX_UNRECOGNIZED'

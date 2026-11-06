@@ -63,7 +63,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
   function crop(a: Stereo, range?: { start: number; end: number }): Stereo {
     const s = range ? Math.max(0, Math.floor(range.start * a.sr)) : 0;
     const e = range ? Math.min(a.l.length, Math.ceil(range.end * a.sr)) : a.l.length;
-    if (e - s < MIN_SECONDS * a.sr) throw new AppError('INTERNAL', `range shorter than ${MIN_SECONDS} s`, 'AUDIO_TOO_SHORT', true); // shortcut: no own ErrorCode until the UI has strings for it
+    if (e - s < MIN_SECONDS * a.sr) throw new AppError('AUDIO_TOO_SHORT', `range shorter than ${MIN_SECONDS} s`, undefined, true);
     return range ? { sr: a.sr, l: a.l.subarray(s, e), r: a.r.subarray(s, e) } : a;
   }
 

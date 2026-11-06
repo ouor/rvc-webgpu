@@ -315,7 +315,5 @@ export function useT(): T {
 }
 
 export function errText(e: AppError) {
-  // shortcut: the engine reports this as INTERNAL + detail until AUDIO_TOO_SHORT is an ErrorCode; then drop this line.
-  const code = e.code === 'INTERNAL' && e.detail === 'AUDIO_TOO_SHORT' ? 'AUDIO_TOO_SHORT' : e.code;
-  return { title: t(`err.${code}.title`), body: t(`err.${code}.body`) };
+  return { title: t(`err.${e.code}.title`), body: t(`err.${e.code}.body`) };
 }
