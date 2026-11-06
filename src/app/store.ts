@@ -59,12 +59,14 @@ export interface Model {
   info?: RvcModelInfo;
   error?: AppError;
   saved?: boolean;
+  saveState?: 'saving' | 'just' | 'quota' | 'failed'; // DESIGN 9.5 caption under the switch
 }
 
 export interface IndexState {
   status: 'parsing' | 'ready' | 'error';
   origin: 'user' | 'bundled'; // bundled = came with the zip / saved model and goes away with it
   fileName: string;
+  bytes?: number; // file size of a user-added index
   id?: string; // set for a loaded index (also from a zip or a saved model)
   info?: IndexInfo;
   error?: AppError;
@@ -111,9 +113,11 @@ export interface Result {
   inst?: AudioBuffer;
   ms: number;
   seq: number;
+  savedOut?: boolean; // mix or a file was downloaded/shared (I-1)
 }
 
-export interface Confirm { title: string; body: string; action: string; destructive?: boolean; resolve: (ok: boolean) => void }
+/** `alt`: an optional second action; resolve gets 'alt' for it, false for cancel. */
+export interface Confirm { title: string; body: string; action: string; alt?: string; destructive?: boolean; resolve: (ok: boolean | 'alt') => void }
 
 export interface State {
   settings: Settings;
@@ -135,6 +139,8 @@ export interface State {
   prev?: Result;
   ab: 'A' | 'B';
   mix: MixParams;
+  mute: { vocal: boolean; inst: boolean }; // I-17: also applies to the saved mix
+  solo?: 'vocal' | 'inst'; // listening only
   format: AudioFormat;
   view: 'work' | 'result';
   settingsTab?: SettingsTab;
@@ -155,18 +161,21 @@ export const useApp = create<State>()(
       dismissed: [],
       ab: 'B',
       mix: DEFAULT_MIX,
-      format: 'pcm16',
+      mute: { vocal: false, inst: false },
+      format: 'mp3',
       view: 'work',
       resolvedTheme: 'light',
     }),
     {
       name: 'web-rvc:ui',
       // Bump on any change to the persisted shape and handle the old shape in migrate (A5).
-      version: 2,
+      version: 3,
       migrate: (p, v) => {
         const s = (p ?? {}) as Partial<State>;
         // v1 stored the deployment default URL; drop it so the current default applies (A3).
         if (v < 2 && s.settings?.modelBaseUrl === DEFAULT_BASE_URL) s.settings = { ...s.settings, modelBaseUrl: undefined };
+        // v2 always stored the old default (WAV 16-bit); MP3 is the new default (MX-5), a choice made from now on is kept.
+        if (v < 3) delete s.format;
         return s;
       },
       // ET-3: options are remembered only when the user keeps "remember" on; the range belongs to one song, never kept.
@@ -182,7 +191,7 @@ export const useApp = create<State>()(
 export const set = useApp.setState;
 export const get = useApp.getState;
 
-export function confirmAsync(c: Omit<Confirm, 'resolve'>): Promise<boolean> {
+export function confirmAsync(c: Omit<Confirm, 'resolve'>): Promise<boolean | 'alt'> {
   get().confirm?.resolve(false); // a newer dialog replaces an open one; its caller must not wait forever
   return new Promise((resolve) => set({ confirm: { ...c, resolve } }));
 }

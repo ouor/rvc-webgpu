@@ -1,7 +1,7 @@
 // Design-system form pieces: HelpTip, SliderField, Segmented, SwitchRow, SectionLabel.
 import { useId, useState, type ReactNode } from 'react';
 import { CircleHelp, RotateCcw, TriangleAlert } from 'lucide-react';
-import { ToggleGroup as TG } from 'radix-ui';
+import { RadioGroup as RG } from 'radix-ui';
 import { Slider } from './ui/slider';
 import { Switch } from './ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
@@ -123,19 +123,19 @@ interface SegmentedProps<T extends string> {
   className?: string;
 }
 
-/** DESIGN SegmentedControl: ToggleGroup(type=single), arrow keys move. */
+/** DESIGN SegmentedControl as a radio group: arrow keys move and select (QA B9, role=radio convention). */
 export function Segmented<T extends string>({ value, onChange, items, label, size = 'sm', className }: SegmentedProps<T>) {
   return (
-    <TG.Root type="single" value={value ?? ''} onValueChange={(v) => v && onChange(v as T)} aria-label={label}
+    <RG.Root value={value ?? ''} onValueChange={(v) => onChange(v as T)} aria-label={label} orientation="horizontal"
       className={cn('inline-grid grid-flow-col auto-cols-fr p-1 rounded-xl bg-muted', size === 'sm' && 'p-0.5 rounded-lg', className)}>
       {items.map((it) => (
-        <TG.Item key={it.value} value={it.value} disabled={it.disabled}
-          className={cn('rounded-lg text-muted-foreground font-semibold transition-colors hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-card focus-visible:outline-2 focus-visible:outline-ring',
+        <RG.Item key={it.value} value={it.value} disabled={it.disabled}
+          className={cn('rounded-lg text-muted-foreground font-semibold transition-colors hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed data-[state=checked]:bg-card data-[state=checked]:text-foreground data-[state=checked]:shadow-card focus-visible:outline-2 focus-visible:outline-ring',
             size === 'sm' ? 'h-7 px-2.5 text-caption rounded-md' : 'h-10 px-3 text-small')}>
           {it.label}
-        </TG.Item>
+        </RG.Item>
       ))}
-    </TG.Root>
+    </RG.Root>
   );
 }
 

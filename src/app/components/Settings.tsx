@@ -1,11 +1,11 @@
 // S5 settings dialog (vertical tabs).
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Check, Clipboard, FolderHeart, FolderInput, HardDrive, Info, Loader2, Lock, MicVocal, Pencil, ShieldCheck, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { Dialog as D, Tabs } from 'radix-ui';
 import { Button } from './ui/button';
 import { Segmented, SwitchRow } from './Field';
-import type { BackendPref, CacheEntry } from '@/shared/types';
-import { fmtBytes, fmtHz, hostOf } from '../lib/format';
+import type { BackendPref, CacheEntry, SavedModel } from '@/shared/types';
+import { fmtBytes, fmtHz, fmtModelSize, hostOf } from '../lib/format';
 import { roleOf } from '../lib/catalog';
 import { cn } from '../lib/utils';
 import { clearCache, copyEnvInfo, importCache, openMyModel, openSettings, removeCacheItem, removeMine, renameMine, setBackend, setModelBaseUrl, showNoticeAgain, updateSettings, verifyCacheItem } from '../controller';
@@ -14,6 +14,8 @@ import { useT } from '../i18n';
 import { version } from '../../../package.json';
 
 const h3 = 'text-h3';
+/** Index part of a saved model: its cache entry holds model + index (QA B17, same numbers as the model card). */
+const sizeOfIndex = (m: SavedModel, entries?: CacheEntry[]) => { const total = entries?.find((e) => e.id === m.id)?.bytes; return m.indexId && total && total > m.bytes ? total - m.bytes : undefined; };
 const fmtDate = (ms: number, lang: string) => new Date(ms).toLocaleDateString(lang, { year: 'numeric', month: 'short', day: 'numeric' });
 
 function StatusChip({ status }: { status: CacheEntry['status'] | 'checking' }) {
@@ -108,7 +110,7 @@ function Storage() {
       <div>
         <h3 className={h3}>{t('set.storage')}</h3>
         <div className="mt-3 rounded-xl border p-4">
-          <div className="flex justify-between text-small tnum"><span className="font-semibold">{t('set.used', { n: fmtBytes(est?.usage ?? 0) })}</span><span className="text-muted-foreground">{t('set.quota', { n: fmtBytes(est?.quota ?? 0) })}</span></div>
+          <div className="flex justify-between text-small tnum"><span className="font-semibold">{t('set.used', { n: fmtBytes(pubBytes + mineBytes) })}</span><span className="text-muted-foreground">{t('set.quota', { n: fmtBytes(est?.quota ?? 0) })}</span></div>
           <div className="mt-2 h-2.5 rounded-full bg-muted overflow-hidden flex">
             <span className="h-full bg-primary" style={{ width: pct(pubBytes) }} /><span className="h-full bg-stem-vocal" style={{ width: pct(mineBytes) }} />
           </div>
@@ -179,9 +181,9 @@ function Models() {
                   : <p className="text-small font-semibold flex items-center gap-1 min-w-0"><span className="truncate">{m.name}</span>
                       <button type="button" disabled={busy} className="grid place-items-center size-6 shrink-0 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" aria-label={t('mine.rename')} title={t('mine.rename')} onClick={() => setEditing(m.id)}><Pencil className="size-3.5" /></button>
                     </p>}
-                <p className="text-caption text-muted-foreground">{[m.source === 'onnx' && 'ONNX', m.version, fmtHz(m.sr), m.f0 ? t('model.f0') : t('model.nof0'), m.indexId ? (m.index ? t('mine.indexN', { n: m.index.nVectors.toLocaleString() }) : t('opt.indexShort')) : t('set.noIndex'), (m.lastUsed || m.savedAt) > 0 && t('mine.lastUsed', { d: fmtDate(m.lastUsed || m.savedAt, lang) })].filter(Boolean).join(' · ')}</p>
+                <p className="text-caption text-muted-foreground">{[m.source === 'onnx' && 'ONNX', m.version, fmtHz(m.sr), m.f0 ? t('model.f0') : t('model.nof0'), !m.indexId && t('set.noIndex'), (m.lastUsed || m.savedAt) > 0 && t('mine.lastUsed', { d: fmtDate(m.lastUsed || m.savedAt, lang) })].filter(Boolean).join(' · ')}</p>
               </div>
-              <span className="text-caption text-muted-foreground tnum">{fmtBytes(entries?.find((e) => e.id === m.id)?.bytes ?? m.bytes)}</span>
+              <span className="text-caption text-muted-foreground tnum text-right">{fmtModelSize(t, m.bytes, sizeOfIndex(m, entries))}</span>
               <Button variant="secondary" size="sm" disabled={busy} onClick={() => void openMyModel(m.id)}>{t('set.use')}</Button>
               <button type="button" disabled={busy} className="grid place-items-center size-8 rounded-lg hover:bg-muted text-muted-foreground hover:text-destructive disabled:opacity-40" aria-label={t('common.delete')} onClick={() => void removeMine(m.id, m.name)}><Trash2 className="size-4" /></button>
             </li>
@@ -257,6 +259,10 @@ const TABS: [SettingsTab, typeof Info][] = [['general', SlidersHorizontal], ['st
 export function SettingsDialog() {
   const t = useT();
   const tab = useApp((s) => s.settingsTab);
+  const opener = useRef<HTMLElement | null>(null);
+  const open = !!tab;
+  // Layout effect: runs before the dialog moves focus inside itself.
+  useLayoutEffect(() => { if (open) opener.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null; }, [open]);
   // DESIGN S5: #settings/<tab> opens a tab directly.
   useEffect(() => {
     const read = () => { const m = /^#settings(?:\/(\w+))?/.exec(location.hash); if (m) openSettings(TABS.find(([k]) => k === m[1])?.[0] ?? 'general'); };
@@ -272,7 +278,8 @@ export function SettingsDialog() {
     <D.Root open={!!tab} onOpenChange={(o) => !o && openSettings(undefined)}>
       <D.Portal>
         <D.Overlay className="fixed inset-0 z-50 bg-overlay/50 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
-        <D.Content className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[min(860px,calc(100%-2rem))] h-[min(600px,calc(100%-2rem))] rounded-2xl bg-card shadow-pop border overflow-hidden data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95" aria-describedby={undefined}>
+        <D.Content className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[min(860px,calc(100%-2rem))] h-[min(600px,calc(100%-2rem))] rounded-2xl bg-card shadow-pop border overflow-hidden data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95" aria-describedby={undefined}
+          onCloseAutoFocus={(e) => { e.preventDefault(); (opener.current?.isConnected ? opener.current : document.getElementById('settings-btn'))?.focus(); }}>
           <Tabs.Root value={tab ?? 'general'} onValueChange={(v) => openSettings(v as SettingsTab)} orientation="vertical" className="flex h-full">
             <Tabs.List className="w-52 shrink-0 border-r bg-muted/40 p-3 flex flex-col gap-1" aria-label={t('settings.title')}>
               <D.Title className="px-3 py-2 text-h3">{t('settings.title')}</D.Title>

@@ -17,6 +17,7 @@ export function ConfirmDialog() {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={() => done(false)}>{t('common.cancel')}</AlertDialogCancel>
+          {c?.alt && <AlertDialogAction variant="secondary" onClick={() => done('alt')}>{c.alt}</AlertDialogAction>}
           <AlertDialogAction variant={c?.destructive ? 'destructive' : 'default'} onClick={() => done(true)}>{c?.action}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

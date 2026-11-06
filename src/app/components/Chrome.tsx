@@ -1,5 +1,5 @@
 // AppHeader + EnvBadge, S6 banners, ET-2 first-run notice, mobile gate.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AudioWaveform, Info, Loader2, MonitorSmartphone, Settings, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
@@ -15,14 +15,14 @@ export function EnvBadge() {
   const t = useT();
   const { env, envError, online, engineReady } = useApp(useShallow((s) => ({ env: s.env, envError: s.envError, online: s.online, engineReady: s.engineReady })));
   const fallback = useApp((s) => s.job?.fallback);
-  let tone = 'muted', text = t('env.checking'), spin = false;
+  let tone = 'muted', text = t('env.checking'), spin = false, help = t('env.badgeTitle');
   if (!online && engineReady) text = t('env.offline');
   else if (envError) { tone = 'error'; text = t('env.error'); }
   else if (!env || !engineReady) spin = true;
-  else if (env.backend === 'wasm' || fallback) { tone = 'warning'; text = env.crossOriginIsolated ? t('env.wasm') : t('env.wasmSingle'); }
-  else { tone = 'success'; text = 'WebGPU'; }
+  else if (env.backend === 'wasm' || fallback) { tone = 'warning'; text = env.crossOriginIsolated ? t('env.wasm') : t('env.wasmSingle'); help = env.crossOriginIsolated ? t('env.wasmHelp') : t('env.wasmSingleHelp'); }
+  else { tone = 'success'; text = t('env.webgpu'); help = t('env.webgpuHelp'); }
   return (
-    <button type="button" onClick={() => openSettings('general')} title={t('env.badgeTitle')}
+    <button type="button" onClick={() => openSettings('general')} title={help}
       className={cn('inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-small font-semibold',
         tone === 'success' && 'bg-success-soft text-success', tone === 'warning' && 'bg-warning-soft text-warning',
         tone === 'error' && 'bg-destructive-soft text-destructive', tone === 'muted' && 'bg-muted text-muted-foreground')}>
@@ -41,13 +41,14 @@ export function AppHeader() {
           <span className="grid place-items-center size-7 rounded-lg bg-primary text-primary-foreground"><AudioWaveform className="size-4" /></span>
           Web RVC
         </div>
+        <span className="hidden xl:inline text-caption text-muted-foreground">{t('header.tagline')}</span>
         <span className="flex-1" />
         <button type="button" onClick={() => openSettings('privacy')} title={t('privacy.chipTitle')}
           className="hidden md:inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-small text-muted-foreground hover:bg-muted">
           <ShieldCheck className="size-4 text-success" />{t('privacy.chip')}
         </button>
         <EnvBadge />
-        <button type="button" onClick={() => openSettings('general')} className="grid place-items-center size-9 rounded-lg hover:bg-muted" aria-label={t('settings.title')}>
+        <button type="button" id="settings-btn" onClick={() => openSettings('general')} className="grid place-items-center size-9 rounded-lg hover:bg-muted" aria-label={t('settings.title')}>
           <Settings className="size-5" strokeWidth={1.75} />
         </button>
       </div>
@@ -97,19 +98,32 @@ export function FirstRunNotice() {
       <Info className="size-5 text-accent-foreground mt-0.5 shrink-0" />
       <div className="flex-1">
         <p className="font-semibold">{t('notice.title')}</p>
-        <p className="text-small text-muted-foreground mt-0.5">{t('notice.body')}</p>
+        <p className="text-small mt-0.5">{t('notice.body')}</p>
       </div>
       <Button variant="secondary" onClick={ackNotice}>{t('notice.ack')}</Button>
     </div>
   );
 }
 
-const isMobile = () => matchMedia('(max-width: 767px)').matches || (/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) && navigator.maxTouchPoints > 0);
+const NARROW = '(max-width: 767px)';
+const phone = () => /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) && navigator.maxTouchPoints > 0;
+
+/** QA B15: follows window resizes (a phone stays a phone). */
+function useMobile() {
+  const [narrow, setNarrow] = useState(() => matchMedia(NARROW).matches);
+  useEffect(() => {
+    const mq = matchMedia(NARROW);
+    const on = () => setNarrow(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return narrow || phone();
+}
 
 export function MobileGate() {
   const t = useT();
   const [go, setGo] = useState(() => { try { return sessionStorage.getItem('web-rvc:mobile-ok') === '1'; } catch { return false; } });
-  const [mobile] = useState(isMobile); // decided once on load; resizing later does not bring the gate back
+  const mobile = useMobile();
   if (go || !mobile) return null;
   return (
     <div className="fixed inset-0 z-50 bg-background grid place-items-center p-6">

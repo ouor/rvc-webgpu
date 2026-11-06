@@ -3,11 +3,11 @@ import { toast } from 'sonner';
 import { createEngineClient } from './engine-client';
 import { decodeFile, peaks, toAudioBuffer } from '@/audio/decode';
 import { renderMix, type MixParams } from '@/audio/mixer';
-import { encodeAudio, type AudioFormat } from '@/audio/wav';
+import { encodeMp3, encodeWav, type AudioFormat } from '@/audio/wav';
 import { toAppError, type AppError } from '@/shared/errors';
 import { DEFAULT_CONVERT, DEFAULT_SEPARATE, type BackendPref, type JobSpec, type Progress, type RvcModelInfo, type Stereo } from '@/shared/types';
-import { AUDIO_EXT, INDEX_EXT, MODEL_EXT, download, extOf, safe, stripExt, type RunStage } from './lib/format';
-import { DEFAULT_BASE_URL, STEPS, confirmAsync, get, isBusy, selEngineBusy, selModelBaseUrl, set, type Job, type Options, type Result, type Settings, type SettingsTab, type Step, type StepInfo } from './store';
+import { AUDIO_EXT, INDEX_EXT, MODEL_EXT, abLabel, download, effectiveMix, exportName, extOf, stripExt, type RunStage, type StemKind } from './lib/format';
+import { DEFAULT_BASE_URL, DEFAULT_OPTIONS, STEPS, confirmAsync, get, isBusy, selEngineBusy, selModelBaseUrl, set, type Job, type Model, type Options, type Result, type Settings, type SettingsTab, type Step, type StepInfo } from './store';
 import { version } from '../../package.json';
 import { errText, t } from './i18n';
 
@@ -56,10 +56,13 @@ export const setOnline = () => set({ online: navigator.onLine });
 export const setResolvedTheme = (resolvedTheme: 'light' | 'dark') => set({ resolvedTheme });
 export const setAB = (ab: 'A' | 'B') => set({ ab });
 export const setMix = (p: Partial<MixParams>) => set((s) => ({ mix: { ...s.mix, ...p } }));
+export const toggleMute = (k: 'vocal' | 'inst') => set((s) => ({ mute: { ...s.mute, [k]: !s.mute[k] } }));
+/** One solo at a time: turning one on turns the other off. */
+export const toggleSolo = (k: 'vocal' | 'inst') => set((s) => ({ solo: s.solo === k ? undefined : k }));
 export const setFormat = (format: AudioFormat) => set({ format });
 export const ackNotice = () => updateSettings({ noticeAck: true });
 export const showNoticeAgain = () => { updateSettings({ noticeAck: false }); openSettings(undefined); };
-export const answerConfirm = (ok: boolean) => { get().confirm?.resolve(ok); set({ confirm: undefined }); };
+export const answerConfirm = (ok: boolean | 'alt') => { get().confirm?.resolve(ok); set({ confirm: undefined }); };
 
 export function setBackend(backend: BackendPref) {
   if (backend === get().settings.backend) return;
@@ -73,13 +76,16 @@ export function setModelBaseUrl(url: string | undefined) {
   void initEngine();
 }
 
-/** Banners: open the advanced options and limit the range to 30 s. */
-export function shortenToClip() {
-  const d = get().song?.duration;
-  updateSettings({ advancedOpen: true });
-  if (d && d > 30) setOpts({ range: { start: 0, end: 30 } });
-  document.getElementById('advanced')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+/** I-19: a 30 s range at 1:00-1:30 (from 0:00 when the song is shorter than 1:30). No-op under 30 s. */
+export function tryClip() {
+  const d = get().song?.duration ?? 0;
+  if (d < 30) return;
+  const start = d >= 90 ? 60 : 0;
+  setOpts({ range: { start, end: start + 30 } });
 }
+
+/** Banners (slow mode, low memory): the same 30 s range. */
+export const shortenToClip = () => { tryClip(); document.getElementById('c1')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
 
 export function copyEnvInfo() {
   const s = get();
@@ -112,8 +118,12 @@ export async function addFiles(files: File[]) {
   if (!songs.length && !models.length && !indexes.length) return;
   if (!(await guardReplace())) return;
   if (songs[0]) void setSong(songs[0]);
-  if (models[0]) await setModel(models[0]);
-  if (indexes[0]) void setIndex(indexes[0]);
+  if (models[0]) await setModel(models[0], !indexes[0]);
+  if (indexes[0]) {
+    await setIndex(indexes[0]);
+    const m = get().model;
+    if (models[0] && m?.status === 'ready' && !m.saved && !m.saveState) void saveMine(true);
+  }
 }
 
 /** ConfirmDialog before replacing inputs while a job runs or a result exists. */
@@ -123,12 +133,29 @@ async function guardReplace() {
     const ok = await confirmAsync({ title: t('confirm.stopTitle'), body: t('confirm.stopBody'), action: t('confirm.stopAction'), destructive: true });
     if (!ok) return false;
     await cancelJob();
-  } else if (s.result && s.view === 'result') {
-    const ok = await confirmAsync({ title: t('confirm.replaceTitle'), body: t('confirm.replaceBody'), action: t('confirm.replaceAction') });
-    if (!ok) return false;
-  }
+  } else if (!(await keepUnsaved(s.result))) return false;
   return true;
 }
+
+/** DESIGN 9.9: a result is protected once a file was saved out (later also when it is in recent work). */
+const unprotected = (r?: Result) => !!r && !r.savedOut;
+
+/** Before an unprotected result is dropped: save its mix and go on, go on anyway, or stop. `aLabel` names the A side on a rerun. */
+async function keepUnsaved(r: Result | undefined, aLabel?: string) {
+  if (!unprotected(r)) return true;
+  const v = await confirmAsync(aLabel
+    ? { title: t('confirm.unsavedTitle'), body: t('confirm.unsavedA', { d: aLabel }), action: t('confirm.unsavedSaveA'), alt: t('confirm.unsavedGo') }
+    : { title: t('confirm.unsavedTitle'), body: t('confirm.unsavedBody'), action: t('confirm.unsavedSave'), alt: t('confirm.unsavedGo') });
+  if (!v) return false;
+  if (v === true) await exportStem(r!.mode === 'song' ? 'mix' : 'converted', r);
+  return true;
+}
+
+// EX-5 + I-1: warn on reload/close while processing or while an unprotected result would be lost.
+addEventListener('beforeunload', (e) => {
+  const s = get();
+  if (isBusy() || unprotected(s.result) || unprotected(s.prev)) { e.preventDefault(); }
+});
 
 export async function setSong(file: File) {
   const current = latest('song');
@@ -139,7 +166,6 @@ export async function setSong(file: File) {
     const inputId = await engine.setInput(dec.audio, { name: file.name, size: file.size, lastModified: file.lastModified });
     if (!current()) return; // replaced meanwhile
     set({ song: { status: 'ready', name: file.name, size: file.size, duration: dec.duration, channels: dec.originalChannels, peaks: pk, buffer: dec.buffer, inputId } });
-    toast(t('toast.songLoaded', { name: stripExt(file.name) }));
     void readSourceRate(file, current);
     void refreshPlan();
   } catch (e) {
@@ -166,7 +192,8 @@ function applyModelIndex(info: RvcModelInfo, fileName: string) {
   else if (get().index?.origin === 'bundled') { latest('index'); set({ index: undefined }); }
 }
 
-export async function setModel(file: File) {
+/** `save`: false when an index from the same drop follows (addFiles saves once, with the index). */
+export async function setModel(file: File, save = true) {
   const current = latest('model');
   set({ model: { status: 'parsing', fileName: file.name, fromZip: extOf(file.name) === 'zip' }, plan: undefined });
   try {
@@ -175,8 +202,8 @@ export async function setModel(file: File) {
     set({ model: { status: 'ready', fileName: file.name, fromZip: extOf(file.name) === 'zip', info } });
     applyModelIndex(info, file.name);
     setOpts({ sid: 0 }); // speaker ids are per model
-    toast(t('toast.modelLoaded', { name: info.name, v: info.version, sr: `${info.sr / 1000}kHz` }) + (info.indexId ? ` · ${t('toast.zipIndex')}` : ''));
     void refreshPlan();
+    if (save) void saveMine(true); // MD-9: saved by default, the switch turns it off
   } catch (e) {
     if (current()) set({ model: { status: 'error', fileName: file.name, error: engineErr(e) } });
   }
@@ -207,7 +234,7 @@ export async function setIndex(file: File) {
   try {
     const info = await engine.loadIndex(file);
     if (!current()) return;
-    set({ index: { status: 'ready', origin: 'user', fileName: file.name, id: info.id, info } });
+    set({ index: { status: 'ready', origin: 'user', fileName: file.name, bytes: file.size, id: info.id, info } });
     if (get().model?.saved) void saveMine(true);
   } catch (e) {
     if (current()) set({ index: { status: 'error', origin: 'user', fileName: file.name, error: engineErr(e) } });
@@ -223,20 +250,23 @@ export async function setOnnxSr(sr: 32000 | 40000 | 48000) {
   set({ model: { ...m, info: { ...m.info, sr, srUnknown: false } } });
 }
 
-/** MD-9: keep the model (+ index) in OPFS. Off removes it again. */
+/** MD-9: keep the model (+ index) in OPFS. Off removes it again. Status goes to the card caption, not a toast (DESIGN 9.5, 9.8). */
 export async function saveMine(on: boolean) {
-  const m = get().model;
-  if (!m?.info) return;
+  const id = get().model?.info?.id;
+  if (!id) return;
+  const patch = (p: Partial<Model>) => { const cur = get().model; if (cur?.info?.id === id) set({ model: { ...cur, ...p } }); };
+  patch({ saved: on, saveState: on ? 'saving' : undefined });
   try {
-    if (on) await engine.myModels.save(m.info.id, get().index?.id);
-    else await engine.myModels.remove(m.info.id);
-    const cur = get().model;
-    if (cur) set({ model: { ...cur, saved: on } });
-    void refreshLists();
-    if (on) toast.success(t('toast.savedMine', { name: m.info.name }));
+    if (on) await engine.myModels.save(id, get().index?.status === 'ready' ? get().index?.id : undefined);
+    else await engine.myModels.remove(id);
+    patch({ saveState: on ? 'just' : undefined });
+    if (on) setTimeout(() => { if (get().model?.saveState === 'just') patch({ saveState: undefined }); }, 3000);
   } catch (e) {
-    toast.error(t('toast.saveFailed'), reason(e));
+    const quota = engineErr(e).code === 'STORAGE_QUOTA';
+    patch({ saved: false, saveState: on ? (quota ? 'quota' : 'failed') : undefined });
+    if (!quota) toast.error(t('toast.saveFailed'), reason(e));
   }
+  void refreshLists();
 }
 
 export async function removeMine(id: string, name: string) {
@@ -255,6 +285,9 @@ export function setOpts(patch: Partial<Options>) {
   set({ opts: { ...get().opts, ...patch } });
   if (modeChanged) void refreshPlan();
 }
+
+/** All options back to the defaults (mode stays; the rerun panel keeps the range, which belongs to the separation). */
+export const resetOptions = (keepRange?: boolean) => { const o = get().opts; setOpts({ ...DEFAULT_OPTIONS, mode: o.mode, range: keepRange ? o.range : undefined }); };
 
 export function buildJob(profile: 'normal' | 'low' = get().crashed ? 'low' : 'normal'): JobSpec | undefined {
   const { song, model, index, opts } = get();
@@ -290,6 +323,9 @@ let pending: { profile: 'normal' | 'low'; rerun: boolean } | undefined;
 export async function start(opts: { rerun?: boolean; profile?: 'normal' | 'low' } = {}) {
   const job = buildJob(opts.profile);
   if (!job || selEngineBusy(get())) return;
+  const s = get();
+  // A new run replaces the result; a rerun drops the old A (the current result stays as A).
+  if (!opts.rerun ? !(await keepUnsaved(s.result)) : s.prev && !(await keepUnsaved(s.prev, abLabel(t, s.prev.opts, s.result!.opts)))) return;
   pending = { profile: job.convert.chunkProfile, rerun: !!opts.rerun };
   let plan;
   try { plan = await engine.plan(job); } catch (e) { return toast.error(t('err.INTERNAL.title'), reason(e)); }
@@ -314,9 +350,15 @@ export async function startDownload(retry = false) {
     }
     const total = items.reduce((a, d) => a + d.bytes, 0);
     set({ dl: { ...dl, status: 'loading', items, done: 0, total, got: {}, cur: undefined, startedAt: performance.now(), error: undefined } });
+    let last = 0;
     await engine.download(items.map((d) => d.id), (p: Progress) => {
       const cur = get().dl;
-      if (cur) set({ dl: { ...cur, done: p.done, total: p.total || total, ...(p.item && { cur: p.item, got: { ...cur.got, [p.item]: p.itemDone ?? 0 } }) } });
+      if (!cur) return;
+      // QA B1: at most ~10 store writes per second; a new item and the end always go through.
+      const t0 = performance.now();
+      if (p.item === cur.cur && p.done < p.total && t0 - last < 100) return;
+      last = t0;
+      set({ dl: { ...cur, done: p.done, total: p.total || total, ...(p.item && { cur: p.item, got: { ...cur.got, [p.item]: p.itemDone ?? 0 } }) } });
     });
     set({ dl: undefined });
     void refreshPlan();
@@ -340,8 +382,6 @@ function emptySteps(mode: Options['mode']): Record<Step, StepInfo> {
   return s;
 }
 
-const onUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
-
 async function run(rerun: boolean, profile: 'normal' | 'low') {
   const job = buildJob(profile);
   const s = get();
@@ -352,7 +392,6 @@ async function run(rerun: boolean, profile: 'normal' | 'low') {
   const st: Job = { status: 'running', rerun, mode: job.mode, seconds, startedAt: performance.now(), steps, change: rerun && s.result ? { from: s.result.opts, to: snapshot } : undefined };
   set({ job: st, stems: rerun ? s.stems : undefined });
   setRunningFlag(true);
-  addEventListener('beforeunload', onUnload); // EX-5
 
   const now = () => performance.now();
   const patchStep = (k: Step, p: Partial<StepInfo>) => {
@@ -409,14 +448,13 @@ async function run(rerun: boolean, profile: 'normal' | 'low') {
     if (err.code === 'CANCELLED') {
       set({ job: undefined });
       const kept = j && (j.steps.separate.state === 'done' || j.steps.separate.state === 'reused');
-      toast(kept ? t('toast.cancelledKept') : t('toast.cancelled'), { action: { label: t('toast.restart'), onClick: () => void start({ rerun }) } });
+      toast(kept ? t('toast.cancelledKept') : t('toast.cancelled'), { duration: 6000, action: { label: t('toast.restart'), onClick: () => void start({ rerun }) } });
     } else if (j) {
       const k = j.current ?? 'separate';
       set({ job: { ...j, status: 'error', error: err, steps: { ...j.steps, [k]: { ...j.steps[k], state: 'error' } } } });
     }
   } finally {
     setRunningFlag(false);
-    removeEventListener('beforeunload', onUnload);
   }
 }
 
@@ -437,7 +475,7 @@ export async function recover(action: 'retry' | 'low' | 'wasm' | 'noIndex') {
   if (action === 'noIndex') clearIndex();
   if (action === 'wasm') {
     set({ settings: { ...get().settings, backend: 'wasm' } });
-    toast(t('toast.wasmKept'), { action: { label: t('settings.title'), onClick: () => openSettings('general') } });
+    toast(t('toast.wasmKept'), { duration: 6000, action: { label: t('settings.title'), onClick: () => openSettings('general') } });
     await initEngine();
   }
   await start({ rerun, profile: action === 'low' ? 'low' : undefined });
@@ -457,38 +495,60 @@ async function to44k(b: AudioBuffer) {
   return ctx.startRendering();
 }
 
-export type StemKind = 'mix' | 'converted' | 'vocals' | 'inst';
+const EXT: Record<AudioFormat, string> = { mp3: 'mp3', pcm16: 'wav', f32: 'wav' };
+const MIME: Record<AudioFormat, string> = { mp3: 'audio/mpeg', pcm16: 'audio/wav', f32: 'audio/wav' };
+export const MP3_BITRATE = 320_000; // I-12: 320 kbps CBR
 
-export function fileName(r: Pick<Result, 'songName' | 'modelName' | 'mode'>, kind: StemKind) {
-  const ext = get().format === 'mp3' ? 'mp3' : 'wav';
-  const song = safe(r.songName), model = safe(r.modelName);
-  const base = {
-    mix: `${song} (${model} ${t('file.cover')})`,
-    converted: r.mode === 'voice' ? `${song} (${model})` : `${song}_vocals_${model}`,
-    vocals: `${song}_vocals_original`,
-    inst: `${song}_instrumental`,
-  }[kind];
-  return `${base}.${ext}`;
+export function fileName(r: Pick<Result, 'songName' | 'modelName' | 'opts'>, kind: StemKind) {
+  return exportName(r.songName, r.modelName, kind, EXT[get().format], r.opts.range?.start);
 }
 
 export const currentResult = () => { const s = get(); return s.ab === 'A' && s.prev ? s.prev : s.result; };
 
-export async function exportStem(kind: StemKind, r = currentResult()) {
+/** One file in the chosen format. The mix gets gains, mute and reverb; stems are the untouched originals (I-14). */
+async function encodeStem(kind: StemKind, r = currentResult()) {
   const s = get();
   const stems = { vocals: r?.vocals ?? s.stems?.vocals, inst: r?.inst ?? s.stems?.inst };
+  let buf: AudioBuffer | undefined;
+  if (kind === 'mix' && r) buf = await renderMix({ vocal: r.converted, inst: r.inst }, effectiveMix(s.mix, s.mute));
+  else if (kind === 'converted' && r) buf = await to44k(r.converted); // PRD 7.4: output is 44.1 kHz
+  else buf = kind === 'vocals' ? stems.vocals : stems.inst;
+  if (!buf) return undefined;
+  const blob = s.format === 'mp3' ? await encodeMp3(buf, MP3_BITRATE) : encodeWav(buf, s.format);
+  const name = fileName(r ?? { songName: stripExt(s.song?.name ?? 'song'), modelName: s.model?.info?.name ?? '', opts: s.opts }, kind);
+  return new File([blob], name, { type: MIME[s.format] });
+}
+
+export async function exportStem(kind: StemKind, r = currentResult()) {
   try {
-    let buf: AudioBuffer | undefined;
-    if (kind === 'mix' && r) buf = await renderMix({ vocal: r.converted, inst: r.inst }, s.mix);
-    else if (kind === 'converted' && r) buf = await to44k(r.converted); // PRD 7.4: output is 44.1 kHz
-    else buf = kind === 'vocals' ? stems.vocals : stems.inst;
-    if (!buf) return;
-    const blob = await encodeAudio(buf, s.format);
-    const name = fileName(r ?? { songName: stripExt(s.song?.name ?? 'song'), modelName: s.model?.info?.name ?? '', mode: 'song' }, kind);
-    download(blob, name);
-    toast.success(t('toast.saved', { name }));
+    const f = await encodeStem(kind, r);
+    if (!f) return;
+    download(f, f.name);
+    markSaved(r);
+    toast.success(t('toast.saved', { name: f.name }));
   } catch (e) {
     toast.error(t('err.INTERNAL.title'), { description: toAppError(e).message }); // render/encode run here, not in the engine
   }
+}
+
+/** I-16: the OS share sheet with the mix in the current format; shown only where navigator.canShare accepts files. */
+export async function shareMix(r = currentResult()) {
+  try {
+    const f = await encodeStem(r?.mode === 'voice' ? 'converted' : 'mix', r);
+    if (!f) return;
+    await navigator.share({ files: [f] });
+    markSaved(r);
+  } catch (e) {
+    if ((e as Error).name !== 'AbortError') toast.error(t('err.INTERNAL.title'), { description: toAppError(e).message });
+  }
+}
+
+/** I-1: a result the user saved (downloaded or shared) no longer needs a leave warning. */
+function markSaved(r?: Result) {
+  if (!r || r.savedOut) return;
+  const s = get();
+  if (s.result === r) set({ result: { ...r, savedOut: true } });
+  else if (s.prev === r) set({ prev: { ...r, savedOut: true } });
 }
 
 /** OOM recovery and progress panel: save the separated stems even when a later stage failed. */
