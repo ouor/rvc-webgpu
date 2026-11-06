@@ -1,0 +1,226 @@
+{
+ "format": 1,
+ "revision": "local",
+ "files": {
+  "LICENSES.md": {
+   "bytes": 995,
+   "sha256": "733fe3d3563b01b3e2ca47651ba1beebea009d30fe8f7e1e668c623ffafcce6b"
+  },
+  "contentvec/contentvec.manifest.json": {
+   "bytes": 29706,
+   "sha256": "6589b9fecc06f2c33ee14c0d909dfe1ff74cb6671cedf3ef5cc790502ff8cfe3"
+  },
+  "contentvec/contentvec.onnx": {
+   "bytes": 220083,
+   "sha256": "ad35e36e02d065d8d08ceccb0d30440f8e078ff7f236c31c43f5a8fa4750bbe2"
+  },
+  "contentvec/contentvec.pth": {
+   "bytes": 189206565,
+   "sha256": "00a037272c7796005f3a4e2666f6ba3f030e03b8d4c49f9645df09eb295f32f9"
+  },
+  "rmvpe/rmvpe.manifest.json": {
+   "bytes": 81113,
+   "sha256": "3d2ea8c161ee3935bb2bb755a330466b149d2c365bf7573e9925a24e93a460fa"
+  },
+  "rmvpe/rmvpe.onnx": {
+   "bytes": 4697883,
+   "sha256": "0f699598743ab4a0eb0816e2bdd73caf6beb0f1ea40f52db2f5d13c27d09d061"
+  },
+  "rmvpe/rmvpe.pth": {
+   "bytes": 181107255,
+   "sha256": "849493aae4c2d780db40a0204db057860120c467dcb2cbcbaf362f730fd805eb"
+  },
+  "rvc/v1-f0-32k.manifest.json": {
+   "bytes": 64841,
+   "sha256": "ccc96a146ced6e6436f02a05c488c85b84862d59431873b2085842963348ebd5"
+  },
+  "rvc/v1-f0-32k.onnx": {
+   "bytes": 707714,
+   "sha256": "9638a60c911935c712460462a9d3ab764c633ec1e919125986ae0dd5cb3758b9"
+  },
+  "rvc/v1-f0-40k.manifest.json": {
+   "bytes": 57613,
+   "sha256": "49bbd4b575906f40c079bca82205f5998119b556c7ba511b50565e3c8fdbc2fc"
+  },
+  "rvc/v1-f0-40k.onnx": {
+   "bytes": 684159,
+   "sha256": "db6c46da531d95bc26d9103d1f776a9b61bc7505ac3bba72002d365b74932b70"
+  },
+  "rvc/v1-f0-48k.manifest.json": {
+   "bytes": 64841,
+   "sha256": "90770d8be15fe784aacc71d1dabadd3cfeb6264f4357042abcfe7e5bc5c83649"
+  },
+  "rvc/v1-f0-48k.onnx": {
+   "bytes": 707714,
+   "sha256": "35df44a6289031c68de242fa708e5925fef358347ba3eeef43a570161a5e19b2"
+  },
+  "rvc/v1-nof0-32k.manifest.json": {
+   "bytes": 62903,
+   "sha256": "3ca76ee7a3fdbef9803047ad7cd825b64f9700026ff9e8f723cbe021e96a08de"
+  },
+  "rvc/v1-nof0-32k.onnx": {
+   "bytes": 700489,
+   "sha256": "9da8cc5feb33ce6799e1e7e9e20aa416f5cea1a28e146623de215cddc955b015"
+  },
+  "rvc/v1-nof0-40k.manifest.json": {
+   "bytes": 55896,
+   "sha256": "c19a962929bceae1b0b3e7b6bdf9f171f9079d0c1e66a079295ba54b83798d18"
+  },
+  "rvc/v1-nof0-40k.onnx": {
+   "bytes": 677397,
+   "sha256": "8ae02b39322fd8272af31df2e492d72572d206652bd45ae544525fca493f55c5"
+  },
+  "rvc/v1-nof0-48k.manifest.json": {
+   "bytes": 62903,
+   "sha256": "7287015cbcffec1df8e401bd981882778524bba04fc8994cdde1554506d13332"
+  },
+  "rvc/v1-nof0-48k.onnx": {
+   "bytes": 700489,
+   "sha256": "3ea7d9c31cad889656b020eefabf2f922d0efd778307369e5685a3fe0944f5f9"
+  },
+  "rvc/v2-f0-32k.manifest.json": {
+   "bytes": 57640,
+   "sha256": "8932a53ee3e0496c0449c42b6066249b1d57a454671bd5f5b77f32852a17d178"
+  },
+  "rvc/v2-f0-32k.onnx": {
+   "bytes": 684188,
+   "sha256": "811abd97d6e88b02257c351bb86b23e701debe29739a0fbae64559e9233ec5db"
+  },
+  "rvc/v2-f0-40k.manifest.json": {
+   "bytes": 57620,
+   "sha256": "e910c3dbfb3c2da89295b1bbe731dd9441e6b0921d47d2d1a1045f554925eb23"
+  },
+  "rvc/v2-f0-40k.onnx": {
+   "bytes": 684166,
+   "sha256": "cd7cc2a301ee701e9b3825d6206af7bc43bce328766c5b1b95689564fda94258"
+  },
+  "rvc/v2-f0-48k.manifest.json": {
+   "bytes": 57644,
+   "sha256": "bc9a3620817ba0d235a8cac0be1e9e94166ede855e1ede117b3dd0ea566b2abc"
+  },
+  "rvc/v2-f0-48k.onnx": {
+   "bytes": 684191,
+   "sha256": "1f744908a967416ade397569a69a65c030f834dfd97f200b0741715153696fea"
+  },
+  "rvc/v2-nof0-32k.manifest.json": {
+   "bytes": 55927,
+   "sha256": "384d23246fac70789cf0428295ac898efc41c32cf393244d211e49cb96735c0d"
+  },
+  "rvc/v2-nof0-32k.onnx": {
+   "bytes": 677430,
+   "sha256": "a3e4c1682bed374164260c666da734c5883ab8ab1b8dbda6c50e60506de13ff1"
+  },
+  "rvc/v2-nof0-40k.manifest.json": {
+   "bytes": 55907,
+   "sha256": "2aa227fa5d4bd4a66042bf155895f840a423d0ece24a236b3e6742761b993b9d"
+  },
+  "rvc/v2-nof0-40k.onnx": {
+   "bytes": 677408,
+   "sha256": "34ab9f01d145398320c9856c63c1a1bb9313f3b2fab7eafd2c4a9f3b32a6c5da"
+  },
+  "rvc/v2-nof0-48k.manifest.json": {
+   "bytes": 55931,
+   "sha256": "ec975e5625224db77c41bdeeaff90197973e6b34dc8e1ce257063cd4d43d5235"
+  },
+  "rvc/v2-nof0-48k.onnx": {
+   "bytes": 677433,
+   "sha256": "da49a3d537b42a0670ba73f8accd73d08a9988bbf2770599c1d3b637faa65b7e"
+  },
+  "uvr/4band_v2.json": {
+   "bytes": 947,
+   "sha256": "2bb315e6a8fb9ff12a546f4361e095388e0e702dbb1ff364e809c6e915e0a94f"
+  },
+  "uvr/uvr-hp-vocal.manifest.json": {
+   "bytes": 50098,
+   "sha256": "65c7fffcf21347a86d9391a926e12327353f7887766df9e0f8271581878f044b"
+  },
+  "uvr/uvr-hp-vocal.onnx": {
+   "bytes": 132026,
+   "sha256": "ae5b54d443b1adbbc2cee5020a231ef1ae5d8181d681a5fe2de9374c32709c3e"
+  },
+  "uvr/uvr-hp-vocal.pth": {
+   "bytes": 63427674,
+   "sha256": "d2b3921160fd6a2e7a61e54567de181451d0037e1106e492ccd62f325c17dcdd"
+  }
+ },
+ "models": {
+  "contentvec": {
+   "graph": "contentvec/contentvec.onnx",
+   "weights": "contentvec/contentvec.pth",
+   "manifest": "contentvec/contentvec.manifest.json"
+  },
+  "rmvpe": {
+   "graph": "rmvpe/rmvpe.onnx",
+   "weights": "rmvpe/rmvpe.pth",
+   "manifest": "rmvpe/rmvpe.manifest.json"
+  },
+  "uvr-hp-vocal": {
+   "graph": "uvr/uvr-hp-vocal.onnx",
+   "weights": "uvr/uvr-hp-vocal.pth",
+   "manifest": "uvr/uvr-hp-vocal.manifest.json",
+   "params": "uvr/4band_v2.json"
+  }
+ },
+ "rvcTemplates": {
+  "[\"v1\",1,192,192,768,2,6,3,\"1\",[3,7,11],[[1,3,5],[1,3,5],[1,3,5]],[10,4,2,2,2],512,[16,16,4,4,4],256,32000]": {
+   "id": "v1-f0-32k",
+   "graph": "rvc/v1-f0-32k.onnx",
+   "manifest": "rvc/v1-f0-32k.manifest.json"
+  },
+  "[\"v1\",1,192,192,768,2,6,3,\"1\",[3,7,11],[[1,3,5],[1,3,5],[1,3,5]],[10,10,2,2],512,[16,16,4,4],256,40000]": {
+   "id": "v1-f0-40k",
+   "graph": "rvc/v1-f0-40k.onnx",
+   "manifest": "rvc/v1-f0-40k.manifest.json"
+  },
+  "[\"v1\",1,192,192,768,2,6,3,\"1\",[3,7,11],[[1,3,5],[1,3,5],[1,3,5]],[10,6,2,2,2],512,[16,16,4,4,4],256,48000]": {
+   "id": "v1-f0-48k",
+   "graph": "rvc/v1-f0-48k.onnx",
+   "manifest": "rvc/v1-f0-48k.manifest.json"
+  },
+  "[\"v1\",0,192,192,768,2,6,3,\"1\",[3,7,11],[[1,3,5],[1,3,5],[1,3,5]],[10,4,2,2,2],512,[16,16,4,4,4],256,32000]": {
+   "id": "v1-nof0-32k",
+   "graph": "rvc/v1-nof0-32k.onnx",
+   "manifest": "rvc/v1-nof0-32k.manifest.json"
+  },
+  "[\"v1\",0,192,192,768,2,6,3,\"1\",[3,7,11],[[1,3,5],[1,3,5],[1,3,5]],[10,10,2,2],512,[16,16,4,4],256,40000]": {
+   "id": "v1-nof0-40k",
+   "graph": "rvc/v1-nof0-40k.onnx",
+   "manifest": "rvc/v1-nof0-40k.manifest.json"
+  },
+  "[\"v1\",0,192,192,768,2,6,3,\"1\",[3,7,11],[[1,3,5],[1,3,5],[1,3,5]],[10,6,2,2,2],512,[16,16,4,4,4],256,48000]": {
+   "id": "v1-nof0-48k",
+   "graph": "rvc/v1-nof0-48k.onnx",
+   "manifest": "rvc/v1-nof0-48k.manifest.json"
+  },
+  "[\"v2\",1,192,192,768,2,6,3,\"1\",[3,7,11],[[1,3,5],[1,3,5],[1,3,5]],[10,8,2,2],512,[20,16,4,4],256,32000]": {
+   "id": "v2-f0-32k",
+   "graph": "rvc/v2-f0-32k.onnx",
+   "manifest": "rvc/v2-f0-32k.manifest.json"
+  },
+  "[\"v2\",1,192,192,768,2,6,3,\"1\",[3,7,11],[[1,3,5],[1,3,5],[1,3,5]],[10,10,2,2],512,[16,16,4,4],256,40000]": {
+   "id": "v2-f0-40k",
+   "graph": "rvc/v2-f0-40k.onnx",
+   "manifest": "rvc/v2-f0-40k.manifest.json"
+  },
+  "[\"v2\",1,192,192,768,2,6,3,\"1\",[3,7,11],[[1,3,5],[1,3,5],[1,3,5]],[12,10,2,2],512,[24,20,4,4],256,48000]": {
+   "id": "v2-f0-48k",
+   "graph": "rvc/v2-f0-48k.onnx",
+   "manifest": "rvc/v2-f0-48k.manifest.json"
+  },
+  "[\"v2\",0,192,192,768,2,6,3,\"1\",[3,7,11],[[1,3,5],[1,3,5],[1,3,5]],[10,8,2,2],512,[20,16,4,4],256,32000]": {
+   "id": "v2-nof0-32k",
+   "graph": "rvc/v2-nof0-32k.onnx",
+   "manifest": "rvc/v2-nof0-32k.manifest.json"
+  },
+  "[\"v2\",0,192,192,768,2,6,3,\"1\",[3,7,11],[[1,3,5],[1,3,5],[1,3,5]],[10,10,2,2],512,[16,16,4,4],256,40000]": {
+   "id": "v2-nof0-40k",
+   "graph": "rvc/v2-nof0-40k.onnx",
+   "manifest": "rvc/v2-nof0-40k.manifest.json"
+  },
+  "[\"v2\",0,192,192,768,2,6,3,\"1\",[3,7,11],[[1,3,5],[1,3,5],[1,3,5]],[12,10,2,2],512,[24,20,4,4],256,48000]": {
+   "id": "v2-nof0-48k",
+   "graph": "rvc/v2-nof0-48k.onnx",
+   "manifest": "rvc/v2-nof0-48k.manifest.json"
+  }
+ }
+}
