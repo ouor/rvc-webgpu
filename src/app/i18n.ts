@@ -124,6 +124,7 @@ const ko = {
   'toast.restart': '다시 시작', 'toast.saved': '{name} 받기 완료', 'toast.copied': '복사했어요', 'toast.linkCopied': '링크를 복사했어요',
 
   'err.detail': '자세한 정보',
+  'err.AUDIO_TOO_SHORT.title': '소리가 너무 짧아요', 'err.AUDIO_TOO_SHORT.body': '1초 이상이어야 해요. 구간을 넓히거나 더 긴 파일을 고르세요.',
   'err.AUDIO_DECODE.title': '이 브라우저가 파일을 열지 못했어요', 'err.AUDIO_DECODE.body': 'Safari는 ogg 파일을 읽지 못할 때가 있어요. wav나 mp3로 바꿔서 넣거나 Chrome에서 열어 주세요.',
   'err.AUDIO_TOO_LONG.title': '이 파일은 20분이 넘어서 처리할 수 없어요', 'err.AUDIO_TOO_LONG.body': '브라우저 메모리 한도 때문에 20분까지만 받아요. 편집 프로그램으로 필요한 부분만 잘라서 다시 넣어 주세요.',
   'err.AUDIO_LONG.title': '곡이 길어요({t})', 'err.AUDIO_LONG.body': '10분이 넘으면 메모리가 부족해질 수 있어요. 처리 구간을 줄이면 더 안정적이에요.',
@@ -264,6 +265,7 @@ const en: Record<Key, string> = {
   'toast.dlStopped': 'Download stopped. Finished files were kept', 'toast.cancelled': 'Cancelled', 'toast.cancelledKept': 'Cancelled. Separated stems were kept',
   'toast.restart': 'Start again', 'toast.saved': 'Saved {name}', 'toast.copied': 'Copied', 'toast.linkCopied': 'Link copied',
   'err.detail': 'Details',
+  'err.AUDIO_TOO_SHORT.title': 'The audio is too short', 'err.AUDIO_TOO_SHORT.body': 'Use at least 1 second. Widen the range or choose a longer file.',
   'err.AUDIO_DECODE.title': 'This browser could not open the file', 'err.AUDIO_DECODE.body': 'Safari sometimes cannot read ogg. Convert to wav or mp3, or open it in Chrome.',
   'err.AUDIO_TOO_LONG.title': 'This file is longer than 20 minutes', 'err.AUDIO_TOO_LONG.body': 'Browser memory limits input to 20 minutes. Cut out the part you need and add it again.',
   'err.AUDIO_LONG.title': 'Long song ({t})', 'err.AUDIO_LONG.body': 'Over 10 minutes may run out of memory. A shorter range is more stable.',
@@ -313,5 +315,7 @@ export function useT(): T {
 }
 
 export function errText(e: AppError) {
-  return { title: t(`err.${e.code}.title`), body: t(`err.${e.code}.body`) };
+  // shortcut: the engine reports this as INTERNAL + detail until AUDIO_TOO_SHORT is an ErrorCode; then drop this line.
+  const code = e.code === 'INTERNAL' && e.detail === 'AUDIO_TOO_SHORT' ? 'AUDIO_TOO_SHORT' : e.code;
+  return { title: t(`err.${code}.title`), body: t(`err.${code}.body`) };
 }

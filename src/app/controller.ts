@@ -4,12 +4,16 @@ import { createEngineClient } from './engine-client';
 import { decodeFile, peaks, toAudioBuffer } from '@/audio/decode';
 import { renderMix, type MixParams } from '@/audio/mixer';
 import { encodeAudio, type AudioFormat } from '@/audio/wav';
-import { toAppError } from '@/shared/errors';
+import { toAppError, type AppError } from '@/shared/errors';
 import { DEFAULT_CONVERT, DEFAULT_SEPARATE, type BackendPref, type JobSpec, type Progress, type RvcModelInfo, type Stereo } from '@/shared/types';
 import { AUDIO_EXT, INDEX_EXT, MODEL_EXT, download, extOf, safe, stripExt, type RunStage } from './lib/format';
-import { DEFAULT_BASE_URL, STEPS, confirmAsync, get, isBusy, selModelBaseUrl, set, type Job, type Options, type Result, type Settings, type SettingsTab, type Step, type StepInfo } from './store';
+import { DEFAULT_BASE_URL, STEPS, confirmAsync, get, isBusy, selEngineBusy, selModelBaseUrl, set, type Job, type Options, type Result, type Settings, type SettingsTab, type Step, type StepInfo } from './store';
 import { version } from '../../package.json';
-import { t } from './i18n';
+import { errText, t } from './i18n';
+
+// Engine rejections are always AppError (ENGINE_API §6); toAppError stays only where UI-thread code (decode, encode, render) can throw.
+const engineErr = (e: unknown) => e as AppError;
+const reason = (e: unknown) => ({ description: errText(engineErr(e)).title });
 
 const engine = createEngineClient();
 const RUNNING_FLAG = 'web-rvc:running'; // DESIGN S6: set while processing; still present on load = the tab died
@@ -24,7 +28,7 @@ export async function initEngine() {
     void refreshPlan();
     void refreshLists();
   } catch (e) {
-    set({ envError: toAppError(e) });
+    set({ envError: engineErr(e) });
   }
 }
 
@@ -174,7 +178,7 @@ export async function setModel(file: File) {
     toast(t('toast.modelLoaded', { name: info.name, v: info.version, sr: `${info.sr / 1000}kHz` }) + (info.indexId ? ` · ${t('toast.zipIndex')}` : ''));
     void refreshPlan();
   } catch (e) {
-    if (current()) set({ model: { status: 'error', fileName: file.name, error: toAppError(e) } });
+    if (current()) set({ model: { status: 'error', fileName: file.name, error: engineErr(e) } });
   }
 }
 
@@ -191,7 +195,7 @@ export async function openMyModel(id: string) {
     setOpts({ sid: 0 });
     void refreshPlan();
   } catch (e) {
-    if (current()) set({ model: { status: 'error', fileName: id, error: toAppError(e) } });
+    if (current()) set({ model: { status: 'error', fileName: id, error: engineErr(e) } });
   }
 }
 
@@ -206,7 +210,7 @@ export async function setIndex(file: File) {
     set({ index: { status: 'ready', origin: 'user', fileName: file.name, id: info.id, info } });
     if (get().model?.saved) void saveMine(true);
   } catch (e) {
-    if (current()) set({ index: { status: 'error', origin: 'user', fileName: file.name, error: toAppError(e) } });
+    if (current()) set({ index: { status: 'error', origin: 'user', fileName: file.name, error: engineErr(e) } });
   }
 }
 
@@ -231,14 +235,14 @@ export async function saveMine(on: boolean) {
     void refreshLists();
     if (on) toast.success(t('toast.savedMine', { name: m.info.name }));
   } catch (e) {
-    toast.error(t('toast.saveFailed'), { description: toAppError(e).message });
+    toast.error(t('toast.saveFailed'), reason(e));
   }
 }
 
 export async function removeMine(id: string, name: string) {
   const ok = await confirmAsync({ title: t('confirm.delModelTitle', { name }), body: t('confirm.delModelBody'), action: t('common.delete'), destructive: true });
   if (!ok) return;
-  try { await engine.myModels.remove(id); } catch (e) { toast.error(t('toast.deleteFailed'), { description: toAppError(e).message }); }
+  try { await engine.myModels.remove(id); } catch (e) { toast.error(t('toast.deleteFailed'), reason(e)); }
   const m = get().model;
   if (m?.info?.id === id) set({ model: { ...m, saved: false } });
   void refreshLists();
@@ -285,10 +289,10 @@ let pending: { profile: 'normal' | 'low'; rerun: boolean } | undefined;
 
 export async function start(opts: { rerun?: boolean; profile?: 'normal' | 'low' } = {}) {
   const job = buildJob(opts.profile);
-  if (!job || isBusy()) return;
+  if (!job || selEngineBusy(get())) return;
   pending = { profile: job.convert.chunkProfile, rerun: !!opts.rerun };
   let plan;
-  try { plan = await engine.plan(job); } catch (e) { return toast.error(t('err.INTERNAL.title'), { description: toAppError(e).message }); }
+  try { plan = await engine.plan(job); } catch (e) { return toast.error(t('err.INTERNAL.title'), reason(e)); }
   const missing = plan.filter((d) => !d.cached);
   if (missing.length) {
     // AC-18: nothing is requested before the user agrees.
@@ -300,7 +304,7 @@ export async function start(opts: { rerun?: boolean; profile?: 'normal' | 'low' 
 
 export async function startDownload(retry = false) {
   const dl = get().dl;
-  if (!dl) return;
+  if (!dl || selEngineBusy(get())) return;
   if (!navigator.onLine) return set({ dl: { ...dl, status: 'offline' } });
   try {
     let items = dl.items;
@@ -319,7 +323,7 @@ export async function startDownload(retry = false) {
     void refreshLists();
     await run(pending?.rerun ?? false, pending?.profile ?? 'normal');
   } catch (e) {
-    const err = toAppError(e);
+    const err = engineErr(e);
     const cur = get().dl;
     if (err.code === 'CANCELLED') { set({ dl: undefined }); toast(t('toast.dlStopped')); void refreshPlan(); return; }
     set({ dl: { ...(cur ?? dl), open: true, status: err.code === 'STORAGE_QUOTA' ? 'storage' : navigator.onLine ? 'failed' : 'offline', error: err } });
@@ -483,7 +487,7 @@ export async function exportStem(kind: StemKind, r = currentResult()) {
     download(blob, name);
     toast.success(t('toast.saved', { name }));
   } catch (e) {
-    toast.error(t('err.INTERNAL.title'), { description: toAppError(e).message });
+    toast.error(t('err.INTERNAL.title'), { description: toAppError(e).message }); // render/encode run here, not in the engine
   }
 }
 
@@ -505,7 +509,7 @@ export async function exportSeparated() {
 export async function clearCache() {
   const ok = await confirmAsync({ title: t('confirm.clearTitle'), body: t('confirm.clearBody'), action: t('confirm.clearAction'), destructive: true });
   if (!ok) return false;
-  try { await engine.cache.clear(); } catch (e) { toast.error(t('toast.deleteFailed'), { description: toAppError(e).message }); }
+  try { await engine.cache.clear(); } catch (e) { toast.error(t('toast.deleteFailed'), reason(e)); }
   void refreshLists();
   void refreshPlan();
   return true;
@@ -518,7 +522,7 @@ export async function verifyCacheItem(id: string) {
     if (st === 'verified') toast.success(t('toast.verifyOk'));
     else toast.error(t(st === 'corrupt' ? 'toast.verifyCorrupt' : 'toast.verifyIncomplete'));
   } catch (e) {
-    toast.error(t('toast.verifyFailed'), { description: toAppError(e).message });
+    toast.error(t('toast.verifyFailed'), reason(e));
   }
   void refreshLists();
   void refreshPlan();
@@ -534,21 +538,21 @@ export async function importCache(files: File[]) {
     if (n('unknown')) parts.push(t('toast.importUnknown', { n: n('unknown') }));
     (n('imported') ? toast.success : toast.error)(parts.join(' · '));
   } catch (e) {
-    toast.error(t('toast.importFailed'), { description: toAppError(e).message });
+    toast.error(t('toast.importFailed'), reason(e));
   }
   void refreshLists();
   void refreshPlan();
 }
 
 export async function renameMine(id: string, name: string) {
-  try { await engine.myModels.rename(id, name); } catch (e) { return void toast.error(t('toast.renameFailed'), { description: toAppError(e).message }); }
+  try { await engine.myModels.rename(id, name); } catch (e) { return void toast.error(t('toast.renameFailed'), reason(e)); }
   const m = get().model;
   if (m?.info?.id === id) set({ model: { ...m, info: { ...m.info, name } } });
   void refreshLists();
 }
 
 export async function removeCacheItem(id: string) {
-  try { await engine.cache.remove(id); } catch (e) { toast.error(t('toast.deleteFailed'), { description: toAppError(e).message }); }
+  try { await engine.cache.remove(id); } catch (e) { toast.error(t('toast.deleteFailed'), reason(e)); }
   void refreshLists();
   void refreshPlan();
 }

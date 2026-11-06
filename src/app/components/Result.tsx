@@ -10,7 +10,7 @@ import { changedKeys, estimateRun, fmtBytes, fmtEta, fmtSigned, fmtTime, formatC
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '../lib/utils';
 import { backToWork, exportStem, fileName, setAB, setFormat, setMix, start, type StemKind } from '../controller';
-import { selBusy, selCurrentResult, useApp, type Options, type Result } from '../store';
+import { selBusy, selEngineBusy, selCurrentResult, useApp, type Options, type Result } from '../store';
 import { useT, type T } from '../i18n';
 
 const summary = (t: T, o: Options, r: Result) =>
@@ -129,7 +129,7 @@ function Files({ cur }: { cur: Result }) {
 function Rerun({ result: r }: { result: Result }) {
   const t = useT();
   const { opts, prev, env } = useApp(useShallow((s) => ({ opts: s.opts, prev: s.prev, env: s.env })));
-  const busy = useApp(selBusy);
+  const busy = useApp(selEngineBusy);
   const changes = changedKeys(r.opts, opts).length ? formatChanges(t, r.opts, opts) : undefined;
   const sepAgain = r.mode === 'song' && opts.aggressiveness !== r.opts.aggressiveness;
   const seconds = r.opts.range ? r.opts.range.end - r.opts.range.start : r.converted.duration;

@@ -188,6 +188,8 @@ export function confirmAsync(c: Omit<Confirm, 'resolve'>): Promise<boolean> {
 }
 
 export const selBusy = (s: State) => !!s.job && s.job.status !== 'error';
+/** The engine runs one job or download at a time (BUSY); also blocks cache/backend changes under a download. */
+export const selEngineBusy = (s: State) => selBusy(s) || s.dl?.status === 'loading';
 export const selModelBaseUrl = (s: State) => s.settings.modelBaseUrl ?? DEFAULT_BASE_URL;
 /** Result shown/exported now: A = previous run while comparing. */
 export const selCurrentResult = (s: State) => (s.ab === 'A' && s.prev) || s.result;

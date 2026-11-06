@@ -9,7 +9,7 @@ import { fmtBytes, fmtHz, hostOf } from '../lib/format';
 import { roleOf } from '../lib/catalog';
 import { cn } from '../lib/utils';
 import { clearCache, copyEnvInfo, importCache, openMyModel, openSettings, removeCacheItem, removeMine, renameMine, setBackend, setModelBaseUrl, showNoticeAgain, updateSettings, verifyCacheItem } from '../controller';
-import { DEFAULT_BASE_URL, selBusy, selModelBaseUrl, useApp, type SettingsTab } from '../store';
+import { DEFAULT_BASE_URL, selEngineBusy, selModelBaseUrl, useApp, type SettingsTab } from '../store';
 import { useT } from '../i18n';
 import { version } from '../../../package.json';
 
@@ -42,7 +42,7 @@ function General() {
   const t = useT();
   const settings = useApp((s) => s.settings);
   const env = useApp((s) => s.env);
-  const busy = useApp(selBusy);
+  const busy = useApp(selEngineBusy);
   const setS = updateSettings;
   const pick = (b: BackendPref) => setBackend(b);
   const cards: [BackendPref, string, string][] = [
@@ -91,7 +91,7 @@ function Storage() {
   const est = useApp((s) => s.cache);
   const entries = est?.entries;
   const baseUrl = useApp(selModelBaseUrl);
-  const busy = useApp(selBusy);
+  const busy = useApp(selEngineBusy);
   const [url, setUrl] = useState(baseUrl);
   const [verifying, setVerifying] = useState<string>();
   const [importing, setImporting] = useState(false);
@@ -159,7 +159,7 @@ function Storage() {
 
 function Models() {
   const t = useT();
-  const busy = useApp(selBusy);
+  const busy = useApp(selEngineBusy);
   const lang = useApp((s) => s.settings.lang);
   const entries = useApp((s) => s.cache?.entries);
   const list = useApp((s) => s.myModels);
