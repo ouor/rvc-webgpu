@@ -1,0 +1,45 @@
+{
+  "manifestFormat": 1,
+  "registryFormat": 1,
+  "externalData": "weights.bin",
+  "manifestKeys": ["format", "id", "externalData", "bytes", "tensors", "inputs", "outputs", "meta"],
+  "registryKeys": ["format", "revision", "files", "models", "rvcTemplates"],
+  "public": {
+    "contentvec": {
+      "files": "contentvec/contentvec",
+      "inputs": [{ "name": "source", "dtype": "float32" }],
+      "outputs": [{ "name": "feats768", "dtype": "float32" }, { "name": "feats256", "dtype": "float32" }],
+      "meta": { "sr": "number", "hop": "number" }
+    },
+    "rmvpe": {
+      "files": "rmvpe/rmvpe",
+      "inputs": [{ "name": "audio", "dtype": "float32" }],
+      "outputs": [{ "name": "hidden", "dtype": "float32" }],
+      "meta": { "sr": "number", "hop": "number", "threshold": "number", "centsOffset": "number" }
+    },
+    "uvr-hp-vocal": {
+      "files": "uvr/uvr-hp-vocal",
+      "params": "uvr/4band_v2.json",
+      "inputs": [{ "name": "x", "dtype": "float32" }],
+      "outputs": [{ "name": "mask", "dtype": "float32" }],
+      "meta": { "window": "number", "offset": "number", "roi": "number", "bins": "number", "outputIs": ["instrumental", "vocal"] }
+    }
+  },
+  "template": {
+    "files": "rvc/{id}",
+    "inputs": {
+      "f0": [
+        { "name": "phone", "dtype": "float32" }, { "name": "phone_lengths", "dtype": "int64" },
+        { "name": "pitch", "dtype": "int64" }, { "name": "pitchf", "dtype": "float32" },
+        { "name": "g", "dtype": "float32" }, { "name": "rnd", "dtype": "float32" },
+        { "name": "noise", "dtype": "float32" }, { "name": "phase", "dtype": "float32" }
+      ],
+      "nof0": [
+        { "name": "phone", "dtype": "float32" }, { "name": "phone_lengths", "dtype": "int64" },
+        { "name": "g", "dtype": "float32" }, { "name": "rnd", "dtype": "float32" }
+      ]
+    },
+    "outputs": [{ "name": "audio", "dtype": "float32" }],
+    "meta": { "version": ["v1", "v2"], "f0": "boolean", "sr": [32000, 40000, 48000], "upp": "number", "signature": "string" }
+  }
+}
