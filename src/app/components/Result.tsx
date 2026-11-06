@@ -14,7 +14,7 @@ import { selBusy, set, useApp, type Options, type Result } from '../store';
 import { useT, type T } from '../i18n';
 
 const summary = (t: T, o: Options, r: Result) =>
-  [`${t('opt.keyShort')} ${fmtSigned(o.key)}`, `Index ${o.indexRate}`, `Protect ${o.protect}`, r.mode === 'song' && `${t('opt.aggShort')} ${o.aggressiveness}`, o.range && `${fmtTime(o.range.start)}–${fmtTime(o.range.end)}`]
+  [`${t('opt.keyShort')} ${fmtSigned(o.key)}`, r.hasIndex && `Index ${o.indexRate}`, `Protect ${o.protect}`, r.mode === 'song' && `${t('opt.aggShort')} ${o.aggressiveness}`, o.range && `${fmtTime(o.range.start)}–${fmtTime(o.range.end)}`]
     .filter(Boolean).join(' · ');
 
 function Hero() {

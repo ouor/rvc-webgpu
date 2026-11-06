@@ -99,6 +99,7 @@ export interface Result {
   modelName: string;
   mode: Options['mode'];
   opts: Options;
+  hasIndex: boolean;
   converted: AudioBuffer; // model SR
   vocals?: AudioBuffer;
   inst?: AudioBuffer;

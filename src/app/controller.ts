@@ -35,6 +35,8 @@ export function detectCrash() {
 }
 
 const setRunningFlag = (on: boolean) => { try { if (on) sessionStorage.setItem(RUNNING_FLAG, '1'); else sessionStorage.removeItem(RUNNING_FLAG); } catch { /* ignore */ } };
+// A deliberate reload/close fires pagehide; a crashed tab does not, so the flag survives only crashes.
+addEventListener('pagehide', () => setRunningFlag(false));
 
 export const dismiss = (id: string) => set({ dismissed: [...get().dismissed, id] });
 
@@ -323,7 +325,7 @@ async function run(rerun: boolean, profile: 'normal' | 'low') {
     if (job.mode === 'song') patchStep('mix', { state: 'done', ms: 0 });
     const prevResult = rerun ? get().result : undefined;
     const result: Result = {
-      songName: stripExt(s.song.name), modelName: s.model.info.name, mode: job.mode, opts: snapshot,
+      songName: stripExt(s.song.name), modelName: s.model.info.name, mode: job.mode, opts: snapshot, hasIndex: !!job.indexId,
       converted: toAudioBuffer(r.converted),
       vocals: r.vocals && toAudioBuffer(r.vocals), inst: r.instrumental && toAudioBuffer(r.instrumental),
       ms: now() - st.startedAt, seq: (get().result?.seq ?? 0) + 1,
