@@ -83,6 +83,12 @@ export class MixPlayer {
     this.playing = true;
   }
 
+  /** Moves the playhead; keeps playing if playing, otherwise the next play() starts here. */
+  seek(t: number): void {
+    if (this.playing) this.play(t);
+    else this.offset = Math.max(0, Math.min(t, this.duration));
+  }
+
   pause(): void {
     if (!this.playing) return;
     this.offset = this.position;

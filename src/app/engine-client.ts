@@ -28,10 +28,13 @@ export function createEngineClient(): EngineClient {
     run: (job, on: OnProgress) => r.run(job, Comlink.proxy(on)),
     getStems: () => r.getStems(),
     cancel: () => r.cancel(),
-    cache: { list: () => cache.list(), remove: (id) => cache.remove(id), clear: () => cache.clear() },
+    cache: {
+      list: () => cache.list(), verify: (id) => cache.verify(id), importFiles: (files) => cache.importFiles(files),
+      remove: (id) => cache.remove(id), clear: () => cache.clear(),
+    },
     myModels: {
       save: (id, ix) => mine.save(id, ix), list: () => mine.list(),
-      open: (id) => mine.open(id), remove: (id) => mine.remove(id),
+      open: (id) => mine.open(id), rename: (id, name) => mine.rename(id, name), remove: (id) => mine.remove(id),
     },
     terminate: () => worker.terminate(),
   };

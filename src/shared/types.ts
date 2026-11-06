@@ -15,6 +15,10 @@ export interface Progress {
   phase?: 'load' | 'run' | 'verify';
   /** download stage only: registry file being fetched. */
   file?: string;
+  /** download stage only: DownloadItem id the file belongs to, and that item's bytes (done/total are overall). */
+  item?: string;
+  itemDone?: number;
+  itemTotal?: number;
   reused?: boolean; // skipped thanks to the F2 cache
   backend?: Backend;
 }
@@ -25,6 +29,8 @@ export interface EnvReport {
   shaderF16: boolean;
   crossOriginIsolated: boolean;
   wasmThreads: number;
+  gpuAdapter?: string; // WebGPU adapter description/vendor, when available
+  modelRevision: string; // registry revision the public model cache belongs to
   storage: { usage: number; quota: number; persisted: boolean };
 }
 
@@ -35,13 +41,14 @@ export interface RvcModelInfo {
   version: 'v1' | 'v2';
   f0: boolean;
   sr: 32000 | 40000 | 48000;
-  nSpk: number;
+  nSpk: number; // as stored in the checkpoint config (WebUI writes 109 even for single-speaker models)
   templateId?: string;
   bytes: number;
   /** F4: sr was not in the file; UI must ask and call setOnnxModelSr(). */
   srUnknown?: boolean;
-  /** Set when a .zip contained an index that was loaded alongside the model. */
+  /** Set when a .zip or a saved model brought an index, which was loaded alongside the model. */
   indexId?: string;
+  index?: IndexInfo; // details of that index (vector count etc.)
   meta?: { epoch?: number; vocoder?: string; embedder?: string; author?: string };
 }
 
@@ -86,7 +93,18 @@ export interface JobResult {
 
 export interface DownloadItem { id: string; label: string; bytes: number; cached: boolean }
 
-export interface CacheEntry { id: string; bytes: number; kind: 'public' | 'my-model' }
+/**
+ * Cache item. status from list(): 'verified' = all files present (each was SHA-256 checked when it entered the cache
+ * and is checked again on every load), 'incomplete' = a file is missing or partially downloaded.
+ * cache.verify(id) re-hashes now and can also return 'corrupt' (bad files are deleted).
+ */
+export interface CacheEntry { id: string; name: string; bytes: number; kind: 'public' | 'my-model'; status: 'verified' | 'incomplete' | 'corrupt' }
+
+/** myModels.list() entry: the model info plus when it was saved and last opened (ms since epoch). */
+export interface SavedModel extends RvcModelInfo { savedAt: number; lastUsed: number }
+
+/** cache.importFiles() result per given file. */
+export interface ImportResult { name: string; path?: string; status: 'imported' | 'unknown' | 'mismatch' }
 
 export const DEFAULT_CONVERT: ConvertParams = {
   f0UpKey: 0, indexRate: 0.75, protect: 0.33, rmsMixRate: 0.25, sid: 0, chunkProfile: 'normal', seed: 0,
@@ -109,11 +127,20 @@ export interface Engine {
   /** Stems of the last separation (available as soon as the separate stage finishes, also during run). */
   getStems(): Promise<{ vocals: Stereo; instrumental: Stereo } | null>;
   cancel(): void;
-  cache: { list(): Promise<CacheEntry[]>; remove(id: string): Promise<void>; clear(): Promise<void> };
+  cache: {
+    list(): Promise<CacheEntry[]>;
+    /** Full SHA-256 check of one item now (public or my-model id). */
+    verify(id: string): Promise<CacheEntry['status']>;
+    /** PRD R10: fill the public cache from local copies of the model files (matched by name, SHA-256 checked). */
+    importFiles(files: File[]): Promise<ImportResult[]>;
+    remove(id: string): Promise<void>;
+    clear(): Promise<void>;
+  };
   myModels: {
     save(modelId: string, indexId?: string): Promise<void>;
-    list(): Promise<RvcModelInfo[]>;
+    list(): Promise<SavedModel[]>; // most recently used first
     open(id: string): Promise<RvcModelInfo>;
+    rename(id: string, name: string): Promise<void>;
     remove(id: string): Promise<void>;
   };
 }

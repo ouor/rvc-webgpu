@@ -2,7 +2,7 @@
 import { AppError } from '../shared/errors';
 import type { DownloadItem } from '../shared/types';
 import { readPth, type Pth } from '../formats/pth';
-import { download, readVerified, type BlobStore } from './store';
+import { download, readVerified, sha256Hex, type BlobStore } from './store';
 import { checkManifest, type Manifest } from './loader';
 
 export interface PublicModel { graph: string; weights: string; manifest: string }
@@ -47,6 +47,38 @@ export class ModelRepo {
     throw new AppError('INTERNAL', `unknown model ${id}`);
   }
 
+  label(id: string) { return LABELS[id] ?? `RVC template ${id}`; }
+
+  /** Public model and template ids, in registry order. */
+  ids(): string[] { return [...Object.keys(this.reg.models), ...Object.values(this.reg.rvcTemplates).map((t) => t.id)]; }
+
+  /** Re-hashes the cached files of `id`; mismatching files are deleted (readVerified). */
+  async verify(id: string): Promise<'verified' | 'incomplete' | 'corrupt'> {
+    let status: 'verified' | 'incomplete' | 'corrupt' = 'verified';
+    for (const p of this.files(id)) {
+      if (!(await this.isCached(p))) { if (status === 'verified') status = 'incomplete'; continue; }
+      try { await readVerified(this.store, this.local(p), this.meta(p).sha256); } catch { status = 'corrupt'; }
+    }
+    return status;
+  }
+
+  /**
+   * PRD R10: stores a local copy of a registry file. `name` is matched against registry paths by its longest
+   * path suffix (a folder upload keeps "rvc/v2-f0-40k.onnx", a plain pick only has the basename).
+   */
+  async importFile(file: Blob, name: string): Promise<{ path?: string; status: 'imported' | 'unknown' | 'mismatch' }> {
+    const norm = name.replace(/\\/g, '/');
+    const hits = Object.keys(this.reg.files).filter((p) => norm === p || norm.endsWith('/' + p) || p.endsWith('/' + norm));
+    if (hits.length !== 1) return { status: 'unknown' }; // none, or an ambiguous basename
+    const path = hits[0], m = this.meta(path);
+    if (file.size !== m.bytes || (await sha256Hex(file)) !== m.sha256) return { path, status: 'mismatch' };
+    await this.store.write(this.local(path), (async function* () {
+      const r = file.stream().getReader();
+      for (;;) { const { done, value } = await r.read(); if (done) return; yield value; }
+    })());
+    return { path, status: 'imported' };
+  }
+
   templateFor(signature: string) { return this.reg.rvcTemplates[signature]; }
 
   private meta(path: string) {
@@ -65,7 +97,7 @@ export class ModelRepo {
       const files = this.files(id);
       const cached = (await Promise.all(files.map((p) => this.isCached(p)))).every(Boolean);
       const bytes = files.reduce((a, p) => a + this.meta(p).bytes, 0);
-      return { id, label: LABELS[id] ?? `RVC template ${id}`, bytes, cached };
+      return { id, label: this.label(id), bytes, cached };
     }));
   }
 

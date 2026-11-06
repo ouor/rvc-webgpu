@@ -6,15 +6,18 @@ import type { Backend, BackendPref } from '../shared/types';
 export type OrtSession = ort.InferenceSession;
 export { ort };
 
-export interface GpuProbe { webgpu: boolean; shaderF16: boolean }
+export interface GpuProbe { webgpu: boolean; shaderF16: boolean; adapter?: string }
 
 /** navigator.gpu lookup (the one DOM-ish dependency of the engine, injectable for tests). */
 export async function probeGpu(): Promise<GpuProbe> {
-  const gpu = (globalThis.navigator as Navigator & { gpu?: { requestAdapter(): Promise<{ features: Set<string> } | null> } })?.gpu;
+  type Info = { vendor?: string; architecture?: string; description?: string };
+  const gpu = (globalThis.navigator as Navigator & { gpu?: { requestAdapter(): Promise<{ features: Set<string>; info?: Info } | null> } })?.gpu;
   if (!gpu) return { webgpu: false, shaderF16: false };
   try {
     const a = await gpu.requestAdapter();
-    return { webgpu: !!a, shaderF16: !!a?.features.has('shader-f16') };
+    const i = a?.info;
+    const adapter = i && (i.description || [i.vendor, i.architecture].filter(Boolean).join(' ')) || undefined;
+    return { webgpu: !!a, shaderF16: !!a?.features.has('shader-f16'), adapter };
   } catch {
     return { webgpu: false, shaderF16: false };
   }

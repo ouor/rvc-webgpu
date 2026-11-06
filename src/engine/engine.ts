@@ -2,7 +2,7 @@
 // No DOM here; storage and fetch are injected so the same code runs in vitest (Node).
 import { AppError, toAppError } from '../shared/errors';
 import type {
-  Backend, CacheEntry, Engine, IndexInfo, JobResult, JobSpec, Mono, OnProgress, RvcModelInfo, StageId, Stereo,
+  Backend, CacheEntry, Engine, ImportResult, IndexInfo, JobResult, JobSpec, Mono, OnProgress, RvcModelInfo, SavedModel, StageId, Stereo,
 } from '../shared/types';
 import { createPrng } from '../dsp/prng';
 import { resample } from '../dsp/resample';
@@ -189,7 +189,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       if (a.index) {
         try {
           const ii = await loadIndexBlob(a.index);
-          if (ii.dim === (info.version === 'v1' ? 256 : 768)) { info.indexId = ii.id; models.get(info.id)!.indexFile = a.index; }
+          if (ii.dim === (info.version === 'v1' ? 256 : 768)) { info.indexId = ii.id; info.index = ii; models.get(info.id)!.indexFile = a.index; }
         } catch { /* a bad index in a zip does not block the model; UI shows "no index" */ }
       }
       return info;
@@ -217,6 +217,11 @@ export function createEngine(deps: EngineDeps = {}): Engine {
   }
 
   const myDir = (id: string) => `my-models/${id}`;
+  const readSaved = async (id: string): Promise<SavedModel> => {
+    const s = JSON.parse(await (await store.read(`${myDir(id)}/info.json`)).text()) as SavedModel;
+    return { ...s, savedAt: s.savedAt ?? 0, lastUsed: s.lastUsed ?? s.savedAt ?? 0 }; // entries saved before these fields
+  };
+  const writeSaved = (s: SavedModel) => store.write(`${myDir(s.id)}/info.json`, [new TextEncoder().encode(JSON.stringify(s))]);
 
   const engine: Engine = {
     async init({ backend: pref, modelBaseUrl }) {
@@ -233,7 +238,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       const est = (await navigator.storage?.estimate?.().catch(() => undefined)) ?? {};
       const persisted = (await navigator.storage?.persisted?.().catch(() => false)) ?? false;
       return {
-        backend, webgpu: gpu.webgpu, shaderF16: gpu.shaderF16,
+        backend, webgpu: gpu.webgpu, shaderF16: gpu.shaderF16, gpuAdapter: gpu.adapter, modelRevision: repo.reg.revision,
         crossOriginIsolated: (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true, wasmThreads: threads,
         storage: { usage: est.usage ?? 0, quota: est.quota ?? 0, persisted },
       };
@@ -262,10 +267,14 @@ export function createEngine(deps: EngineDeps = {}): Engine {
 
     async download(ids, on) {
       const r = needRepo();
-      const files = [...new Set(ids.flatMap((id) => r.files(id)))];
+      const owner = new Map<string, string>(); // file -> first item that needs it
+      for (const id of ids) for (const f of r.files(id)) if (!owner.has(f)) owner.set(f, id);
       const todo = [];
-      for (const f of files) if (!(await r.isCached(f))) todo.push(f);
-      const total = todo.reduce((a, f) => a + r.reg.files[f].bytes, 0);
+      for (const f of owner.keys()) if (!(await r.isCached(f))) todo.push(f);
+      const bytesOf = (f: string) => r.reg.files[f].bytes;
+      const total = todo.reduce((a, f) => a + bytesOf(f), 0);
+      const itemTotal = new Map<string, number>(), itemBase = new Map<string, number>();
+      for (const f of todo) itemTotal.set(owner.get(f)!, (itemTotal.get(owner.get(f)!) ?? 0) + bytesOf(f));
       if (!todo.length) return;
       await navigator.storage?.persist?.().catch(() => false);
       const est = await navigator.storage?.estimate?.().catch(() => undefined);
@@ -273,11 +282,16 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       cancel.reset();
       let base = 0;
       for (const f of todo) {
+        const item = owner.get(f)!, ib = itemBase.get(item) ?? 0;
         await r.download(f, {
-          onBytes: (n) => on({ stage: 'download', done: base + n, total, file: f, phase: n >= r.reg.files[f].bytes ? 'verify' : 'run' }),
+          onBytes: (n) => on({
+            stage: 'download', done: base + n, total, file: f, phase: n >= bytesOf(f) ? 'verify' : 'run',
+            item, itemDone: ib + n, itemTotal: itemTotal.get(item),
+          }),
           throwIfCancelled: () => cancel.check(),
         });
-        base += r.reg.files[f].bytes;
+        base += bytesOf(f);
+        itemBase.set(item, ib + bytesOf(f));
       }
       on({ stage: 'download', done: total, total });
     },
@@ -308,16 +322,42 @@ export function createEngine(deps: EngineDeps = {}): Engine {
     cache: {
       async list() {
         const r = needRepo();
-        const ids = [...Object.keys(r.reg.models), ...Object.values(r.reg.rvcTemplates).map((t) => t.id)];
         const out: CacheEntry[] = [];
-        for (const id of ids) {
-          let bytes = 0;
-          for (const f of r.files(id)) if (await r.isCached(f)) bytes += r.reg.files[f].bytes;
-          if (bytes) out.push({ id, bytes, kind: 'public' });
+        const pub = `public/${r.reg.revision}/`;
+        const stored = new Map((await store.list(pub)).map((f) => [f.path, f.bytes]));
+        for (const id of r.ids()) {
+          let bytes = 0, complete = true;
+          for (const f of r.files(id)) {
+            const b = stored.get(pub + f) ?? 0;
+            bytes += b;
+            if (b !== r.reg.files[f].bytes) complete = false;
+          }
+          if (bytes) out.push({ id, name: r.label(id), bytes, kind: 'public', status: complete ? 'verified' : 'incomplete' });
         }
         const mine = new Map<string, number>();
         for (const f of await store.list('my-models/')) { const id = f.path.split('/')[1]; mine.set(id, (mine.get(id) ?? 0) + f.bytes); }
-        for (const [id, bytes] of mine) out.push({ id, bytes, kind: 'my-model' });
+        for (const [id, bytes] of mine) {
+          const saved = await readSaved(id).catch(() => undefined);
+          const ok = !!saved && (await store.has(`${myDir(id)}/model.${saved.source}`));
+          out.push({ id, name: saved?.name ?? id, bytes, kind: 'my-model', status: ok ? 'verified' : 'incomplete' });
+        }
+        return out;
+      },
+      async verify(id) {
+        const r = needRepo();
+        if (r.ids().includes(id)) return r.verify(id);
+        const saved = await readSaved(id).catch(() => undefined);
+        const file = saved && `${myDir(id)}/model.${saved.source}`;
+        if (!file || !(await store.has(file))) return 'incomplete';
+        return (await idOf(await store.read(file))) === id ? 'verified' : 'corrupt'; // my-model id = file hash prefix
+      },
+      async importFiles(files) {
+        const r = needRepo();
+        const out: ImportResult[] = [];
+        for (const f of files) {
+          const name = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+          out.push({ name: f.name, ...(await r.importFile(f, name)) });
+        }
         return out;
       },
       async remove(id) { // public model id or my-model id, as cache.list() returns them
@@ -338,28 +378,38 @@ export function createEngine(deps: EngineDeps = {}): Engine {
         await store.write(`${dir}/model.${m.info.source}`, stream(m.file));
         if (idx) await store.write(`${dir}/model.index`, stream(idx));
         else await store.remove(`${dir}/model.index`);
-        const info = { ...m.info, indexId: idx ? (indexId ?? m.info.indexId) : undefined };
-        await store.write(`${dir}/info.json`, [new TextEncoder().encode(JSON.stringify(info))]);
+        const ix = idx ? indexes.get(indexId ?? m.info.indexId ?? '')?.info : undefined;
+        const now = Date.now();
+        await writeSaved({ ...m.info, indexId: ix?.id, index: ix, savedAt: now, lastUsed: now });
       },
       async list() {
-        const out: RvcModelInfo[] = [];
+        const out: SavedModel[] = [];
         for (const f of await store.list('my-models/')) {
           if (!f.path.endsWith('/info.json')) continue;
-          try { out.push(JSON.parse(await (await store.read(f.path)).text())); } catch { /* skip broken entry */ }
+          try { out.push(await readSaved(f.path.split('/')[1])); } catch { /* skip broken entry */ }
         }
-        return out;
+        return out.sort((a, b) => b.lastUsed - a.lastUsed);
+      },
+      async rename(id, name) {
+        const saved = await readSaved(id).catch(() => { throw new AppError('NOT_FOUND', `unknown my-model ${id}`); });
+        const n = name.trim() || saved.name;
+        await writeSaved({ ...saved, name: n });
+        const loaded = models.get(id);
+        if (loaded) loaded.info.name = n;
       },
       async open(id) {
         const dir = myDir(id);
-        const saved = JSON.parse(await (await store.read(`${dir}/info.json`)).text()) as RvcModelInfo;
+        const saved = await readSaved(id).catch(() => { throw new AppError('NOT_FOUND', `unknown my-model ${id}`); });
         const info = await loadModelBlob(await store.read(`${dir}/model.${saved.source}`), `${saved.name}.${saved.source}`);
         info.name = saved.name;
         if (saved.source === 'onnx' && !saved.srUnknown) { info.sr = saved.sr; info.srUnknown = false; }
         if (await store.has(`${dir}/model.index`)) {
           const f = await store.read(`${dir}/model.index`);
-          info.indexId = (await loadIndexBlob(f)).id;
+          info.index = await loadIndexBlob(f);
+          info.indexId = info.index.id;
           models.get(info.id)!.indexFile = f;
         }
+        await writeSaved({ ...saved, index: info.index ?? saved.index, lastUsed: Date.now() });
         return info;
       },
       remove: (id) => store.remove(myDir(id)),
