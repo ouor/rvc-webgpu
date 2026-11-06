@@ -14,3 +14,9 @@ weights/
 # reference repos and dev-time docs stay local
 external/
 docs/dev/
+
+# web build/test output
+dev-dist/
+test-results/
+playwright-report/
+.env.local
