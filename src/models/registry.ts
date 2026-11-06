@@ -1,6 +1,6 @@
 // Public model registry (§17.5) and the repo that downloads, caches and opens its files.
 import { AppError } from '../shared/errors';
-import type { DownloadItem } from '../shared/types';
+import type { DownloadItem, PublicId } from '../shared/types';
 import { readPth, type Pth } from '../formats/pth';
 import { blobChunks, download, readVerified, sha256Hex, type BlobStore } from './store';
 import { checkManifest, type Manifest } from './loader';
@@ -13,7 +13,7 @@ export interface Registry {
   models: { contentvec: PublicModel; rmvpe: PublicModel; 'uvr-hp-vocal': PublicModel & { params: string } };
   rvcTemplates: Record<string, { id: string; graph: string; manifest: string }>;
 }
-export type PublicId = keyof Registry['models'];
+export type { PublicId };
 
 const LABELS: Record<string, string> = { contentvec: 'ContentVec (HuBERT)', rmvpe: 'RMVPE', 'uvr-hp-vocal': 'UVR VR (vocal)' };
 

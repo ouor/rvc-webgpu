@@ -3,6 +3,7 @@
 import type { ConvertParams, Mono } from '../../shared/types';
 import { filtfilt, HPF48_A, HPF48_B } from '../../dsp/filtfilt';
 import { changeRms } from '../../dsp/rms';
+import { reflectIndex } from '../../dsp/pad';
 import { quantizeF0 } from './f0';
 import { blendIndex, searchIndex } from './index-search';
 import type { Feats } from './features';
@@ -14,13 +15,6 @@ import { yieldToLoop } from '../ctx';
 const SR = 16000, WINDOW = 160;
 export const CHUNK_PROFILES = { normal: [1, 6, 38, 41], low: [1, 5, 30, 32] } as const; // x_pad, x_query, x_center, x_max
 
-/** numpy.pad(mode='reflect') index mapping (handles pads longer than the signal). */
-function reflectIndex(i: number, n: number): number {
-  if (n === 1) return 0;
-  const p = 2 * (n - 1);
-  i = ((i % p) + p) % p;
-  return i < n ? i : p - i;
-}
 export function reflectPad(x: ArrayLike<number>, pad: number): Float32Array {
   const out = new Float32Array(x.length + 2 * pad);
   for (let i = 0; i < out.length; i++) out[i] = x[reflectIndex(i - pad, x.length)];

@@ -1,10 +1,8 @@
 // Engine API (ARCHITECTURE §6.2): job planning, stage execution, F2 reuse cache, cancellation.
 // No DOM here; storage and fetch are injected so the same code runs in vitest (Node).
 import { AppError, toAppError } from '../shared/errors';
-import type {
-  Backend, CacheEntry, Engine, ImportResult, IndexInfo, JobResult, JobSpec, Mono, OnProgress, RvcModelInfo, StageId, Stereo,
-} from '../shared/types';
-import { createPrng } from '../dsp/prng';
+import { PUBLIC_IDS } from '../shared/types';
+import type { Backend, CacheEntry, Engine, ImportResult, IndexInfo, JobResult, JobSpec, OnProgress, RvcModelInfo, Stereo } from '../shared/types';
 import { resample } from '../dsp/resample';
 import { readFaissIndex, type IvfIndex } from '../formats/faiss';
 import { readModelArchive } from '../formats/archive';
@@ -16,15 +14,15 @@ import { loadRegistry, ModelRepo, type Opened, type PublicId, type Registry } fr
 import { MemoryStore, type BlobStore } from '../models/store';
 import { modelIdOf, MyModelStore } from '../models/my-models';
 import { publicDir } from '../models/layout';
-import { CancelFlag, type RunCtx } from './ctx';
+import { CancelFlag } from './ctx';
+import { JobRunner, type Stages } from './run';
 import { checkVrParams, separateVR, type VrBandParams, type VrMeta } from './separate/vr';
 import { extractF0 } from './rvc/f0';
-import { extractFeatures } from './rvc/features';
+import { extractFeatures, featDim } from './rvc/features';
 import { createOnnxNet, createTemplateNet, describeOnnx, type RvcNet } from './rvc/net';
-import { prepareConvert, synthesizeAll, type ConvertCache } from './rvc/pipeline';
 
-/** Injection points for tests: storage, network, and a registry in place of the bundled/fetched one. */
-export interface EngineDeps { store?: BlobStore; fetch?: typeof fetch; registry?: Registry }
+/** Injection points for tests: storage, network, a registry in place of the bundled/fetched one, model stages. */
+export interface EngineDeps { store?: BlobStore; fetch?: typeof fetch; registry?: Registry; stages?: Partial<Stages> }
 
 // `stored` = my-model id when `file` is that saved model's OPFS file (see myModels.remove).
 type LoadedModel =
@@ -32,6 +30,7 @@ type LoadedModel =
   | { kind: 'onnx'; info: RvcModelInfo; bytes: Uint8Array; onnx: OnnxInfo; file: Blob; indexFile?: Blob; stored?: string };
 
 const MAX_SECONDS = 20 * 60; // IN-3 hard limit
+const MIN_SECONDS = 1; // shorter than the RMS window (0.5 s) and the 1 s chunk padding gives nothing usable (R1 M3)
 const idOf = modelIdOf;
 const baseName = (n: string) => n.replace(/\.[^.]+$/, '');
 
@@ -47,8 +46,6 @@ export function createEngine(deps: EngineDeps = {}): Engine {
   const models = new Map<string, LoadedModel>();
   const indexes = new Map<string, { info: IndexInfo; index: IvfIndex; file: Blob }>();
   const mine = new MyModelStore(() => store);
-  let sep: { key: string; vocals: Stereo; instrumental: Stereo } | undefined;
-  let conv: { key: string; cache: ConvertCache } | undefined;
 
   const needRepo = () => { if (!repo) throw new AppError('INTERNAL', 'engine.init() not called'); return repo; };
   const get = <T>(m: Map<string, T>, id: string | undefined, what: string): T => {
@@ -60,15 +57,14 @@ export function createEngine(deps: EngineDeps = {}): Engine {
   /** Public model ids a job needs (CA-6: no separation model in voice mode). */
   function requiredIds(job: JobSpec): string[] {
     const m = get(models, job.modelId, 'model');
-    const ids = ['contentvec'];
-    if (m.info.f0) ids.push('rmvpe');
-    if (job.mode === 'song') ids.push('uvr-hp-vocal');
+    const ids: string[] = [PUBLIC_IDS.contentvec];
+    if (m.info.f0) ids.push(PUBLIC_IDS.rmvpe);
+    if (job.mode === 'song') ids.push(PUBLIC_IDS.separator);
     if (m.info.templateId) ids.push(m.info.templateId);
     return ids;
   }
 
-  async function openPublic(id: PublicId, stage: StageId, on: OnProgress): Promise<{ s: OrtSession; opened: Opened; backend: Backend }> {
-    on({ stage, done: 0, total: 1, phase: 'load' });
+  async function openPublic(id: PublicId): Promise<{ s: OrtSession; opened: Opened; backend: Backend }> {
     const opened = await needRepo().open(id);
     const r = await createSessionFromParts({ graph: opened.graph, manifest: opened.manifest, pth: opened.pth!, tensors: tensorMap(opened.pth!.root) }, backend, 'CACHE_INTEGRITY');
     return { s: r.session, opened, backend: r.backend };
@@ -81,101 +77,51 @@ export function createEngine(deps: EngineDeps = {}): Engine {
   }
 
   function crop(a: Stereo, range?: { start: number; end: number }): Stereo {
-    if (!range) return a;
-    const s = Math.max(0, Math.floor(range.start * a.sr)), e = Math.min(a.l.length, Math.ceil(range.end * a.sr));
-    if (e <= s) throw new AppError('INTERNAL', 'empty range');
-    return { sr: a.sr, l: a.l.subarray(s, e), r: a.r.subarray(s, e) };
+    const s = range ? Math.max(0, Math.floor(range.start * a.sr)) : 0;
+    const e = range ? Math.min(a.l.length, Math.ceil(range.end * a.sr)) : a.l.length;
+    if (e - s < MIN_SECONDS * a.sr) throw new AppError('INTERNAL', `range shorter than ${MIN_SECONDS} s`, 'AUDIO_TOO_SHORT', true); // shortcut: no own ErrorCode until the UI has strings for it
+    return range ? { sr: a.sr, l: a.l.subarray(s, e), r: a.r.subarray(s, e) } : a;
   }
 
-  async function runOnce(job: JobSpec, profile: JobSpec['convert']['chunkProfile'], on: OnProgress): Promise<JobResult> {
+  const stages: Stages = {
+    async separate(audio, aggressiveness, ctx) {
+      const { s, opened, backend: used } = await openPublic(PUBLIC_IDS.separator);
+      try {
+        const mp = opened.params as VrBandParams;
+        checkVrParams(mp);
+        const meta = opened.manifest.meta as unknown as VrMeta;
+        const a = audio.sr === mp.sr ? audio : { sr: mp.sr, l: resample(audio.l, audio.sr, mp.sr), r: resample(audio.r, audio.sr, mp.sr) };
+        return await separateVR(a, s, mp, meta, { aggressiveness }, ctx(used));
+      } finally { await releaseSession(s); }
+    },
+    async f0(padded, ctx) {
+      const { s, opened, backend: used } = await openPublic(PUBLIC_IDS.rmvpe);
+      try { return await extractF0(padded, s, ctx(used), opened.manifest.meta as { threshold?: number; centsOffset?: number }); }
+      finally { await releaseSession(s); }
+    },
+    async features(chunks, v, ctx) {
+      const { s, backend: used } = await openPublic(PUBLIC_IDS.contentvec);
+      const c = ctx(used);
+      try {
+        const out = [];
+        for (let i = 0; i < chunks.length; i++) {
+          c.throwIfCancelled();
+          out.push(await extractFeatures(chunks[i].slice(), s, v)); // own buffer for the ORT tensor
+          c.progress(i + 1, chunks.length);
+        }
+        return out;
+      } finally { await releaseSession(s); }
+    },
+    net: (info) => createNet(get(models, info.id, 'model')),
+    ...deps.stages,
+  };
+  const runner = new JobRunner(stages);
+
+  function runOnce(job: JobSpec, profile: JobSpec['convert']['chunkProfile'], on: OnProgress): Promise<JobResult> {
     const input = get(inputs, job.inputId, 'input');
     const model = get(models, job.modelId, 'model');
     const index = job.indexId ? get(indexes, job.indexId, 'index') : undefined;
-    const missing = (await needRepo().plan(requiredIds(job))).filter((d) => !d.cached);
-    if (missing.length) throw new AppError('MODELS_MISSING', 'public models not downloaded', missing.map((d) => d.id).join(','), true);
-
-    const audio = crop(input, job.range);
-    const reused: StageId[] = [];
-    const timings: Partial<Record<StageId, number>> = {};
-    const rng = createPrng(job.convert.seed);
-    const ctxFor = (stage: StageId, used: Backend): RunCtx => ({
-      backend: used, rng, throwIfCancelled: () => cancel.check(),
-      progress: (done, total) => on({ stage, done, total, phase: 'run', backend: used }),
-    });
-    const reuse = (stage: StageId) => { reused.push(stage); on({ stage, done: 1, total: 1, reused: true }); };
-    const timed = async <T>(stage: StageId, f: () => Promise<T>) => { const t0 = performance.now(); try { return await f(); } finally { timings[stage] = performance.now() - t0; } };
-    const rangeKey = job.range ? `${job.range.start}-${job.range.end}` : 'all';
-
-    // separate
-    let source: Stereo = audio;
-    let sepKey = 'voice';
-    if (job.mode === 'song') {
-      sepKey = `${job.inputId}|${rangeKey}|${job.separate.modelId}|${job.separate.aggressiveness}`;
-      if (sep?.key === sepKey) reuse('separate');
-      else {
-        sep = undefined;
-        conv = undefined;
-        await timed('separate', async () => {
-          const { s, opened, backend: used } = await openPublic('uvr-hp-vocal', 'separate', on);
-          try {
-            const mp = opened.params as VrBandParams;
-            checkVrParams(mp);
-            const meta = opened.manifest.meta as unknown as VrMeta;
-            const a44 = audio.sr === mp.sr ? audio : { sr: mp.sr, l: resample(audio.l, audio.sr, mp.sr), r: resample(audio.r, audio.sr, mp.sr) };
-            const r = await separateVR(a44, s, mp, meta, { aggressiveness: job.separate.aggressiveness }, ctxFor('separate', used));
-            sep = { key: sepKey, ...r };
-          } finally { await releaseSession(s); }
-        });
-      }
-      source = sep!.vocals;
-    }
-
-    // 16 kHz preprocessing + chunk plan (cached with f0/features)
-    const convKey = `${job.inputId}|${rangeKey}|${sepKey}|${profile}`;
-    if (conv?.key !== convKey) {
-      const mono = new Float32Array(source.l.length);
-      for (let i = 0; i < mono.length; i++) mono[i] = (source.l[i] + source.r[i]) / 2;
-      conv = { key: convKey, cache: prepareConvert(resample(mono, source.sr, 16000), profile) };
-    }
-    const cache = conv.cache;
-
-    // f0
-    if (model.info.f0) {
-      if (cache.f0Hz) reuse('f0');
-      else await timed('f0', async () => {
-        const { s, opened, backend: used } = await openPublic('rmvpe', 'f0', on);
-        try { cache.f0Hz = await extractF0(cache.padded, s, ctxFor('f0', used), opened.manifest.meta as { threshold?: number; centsOffset?: number }); }
-        finally { await releaseSession(s); }
-      });
-    }
-
-    // features
-    const v = model.info.version;
-    if (cache.feats[v]) reuse('features');
-    else await timed('features', async () => {
-      const { s, backend: used } = await openPublic('contentvec', 'features', on);
-      const ctx = ctxFor('features', used);
-      try {
-        const out = [];
-        for (let c = 0; c < cache.chunks.length; c++) {
-          ctx.throwIfCancelled();
-          const ch = cache.chunks[c];
-          out.push(await extractFeatures(cache.padded.slice(ch.start, ch.end), s, v));
-          ctx.progress(c + 1, cache.chunks.length);
-        }
-        cache.feats[v] = out;
-      } finally { await releaseSession(s); }
-    });
-
-    // convert
-    const converted: Mono = await timed('convert', async () => {
-      on({ stage: 'convert', done: 0, total: 1, phase: 'load' });
-      const net = await createNet(model);
-      try {
-        return await synthesizeAll(cache, net, job.convert, ctxFor('convert', net.backend), index && { id: job.indexId!, index: index.index });
-      } finally { await net.release(); }
-    });
-    return { vocals: sep?.vocals, instrumental: sep?.instrumental, converted, reused, timings };
+    return runner.run({ spec: job, audio: crop(input, job.range), model: model.info, index: index && { id: job.indexId!, index: index.index }, profile }, on, cancel);
   }
 
   async function loadIndexBlob(file: Blob): Promise<IndexInfo> {
@@ -194,7 +140,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       if (a.index) {
         try {
           const ii = await loadIndexBlob(a.index);
-          if (ii.dim === (info.version === 'v1' ? 256 : 768)) { info.indexId = ii.id; info.index = ii; models.get(info.id)!.indexFile = a.index; }
+          if (ii.dim === featDim(info.version)) { info.indexId = ii.id; info.index = ii; models.get(info.id)!.indexFile = a.index; }
         } catch { /* a bad index in a zip does not block the model; UI shows "no index" */ }
       }
       return info;
@@ -245,7 +191,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
     async setInput(audio, meta) {
       if (audio.l.length / audio.sr > MAX_SECONDS) throw new AppError('AUDIO_TOO_LONG', `input longer than ${MAX_SECONDS} s`);
       const id = `${meta.name}|${meta.size}|${meta.lastModified}|${audio.l.length}`;
-      if (!inputs.has(id)) { inputs.clear(); sep = undefined; conv = undefined; } // one input at a time (memory)
+      if (!inputs.has(id)) { inputs.clear(); runner.clear(); } // one input at a time (memory)
       inputs.set(id, audio);
       return id;
     },
@@ -299,6 +245,8 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       busy = true;
       cancel.reset();
       try {
+        const missing = (await needRepo().plan(requiredIds(job))).filter((d) => !d.cached);
+        if (missing.length) throw new AppError('MODELS_MISSING', 'public models not downloaded', missing.map((d) => d.id).join(','), true);
         try {
           return await runOnce(job, job.convert.chunkProfile, on);
         } catch (e) {
@@ -313,7 +261,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       }
     },
 
-    async getStems() { return sep ? { vocals: sep.vocals, instrumental: sep.instrumental } : null; },
+    async getStems() { return runner.stems ?? null; },
 
     cancel() { cancel.cancel(); },
 
@@ -361,6 +309,7 @@ export function createEngine(deps: EngineDeps = {}): Engine {
       async save(modelId, indexId) {
         const m = get(models, modelId, 'model');
         const ix = indexId ? get(indexes, indexId, 'index') : m.info.indexId ? indexes.get(m.info.indexId) : undefined;
+        if (ix && ix.info.dim !== featDim(m.info.version)) throw new AppError('INDEX_DIM_MISMATCH', `index dimension ${ix.info.dim}`, undefined, true);
         await mine.save({ info: m.info, file: m.file }, ix && { info: ix.info, file: ix.file });
       },
       list: () => mine.list(),
@@ -376,11 +325,8 @@ export function createEngine(deps: EngineDeps = {}): Engine {
         m.stored = id;
         info.name = f.saved.name;
         if (f.saved.source === 'onnx' && !f.saved.srUnknown) { info.sr = f.saved.sr; info.srUnknown = false; }
-        if (f.index) {
-          info.index = await loadIndexBlob(f.index);
-          info.indexId = info.index.id;
-          m.indexFile = f.index;
-        }
+        const ii = f.index && (await loadIndexBlob(f.index));
+        if (ii && ii.dim === featDim(info.version)) { info.index = ii; info.indexId = ii.id; m.indexFile = f.index; }
         await mine.touch(id, info);
         return info;
       },

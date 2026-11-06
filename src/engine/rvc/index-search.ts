@@ -1,4 +1,5 @@
 // faiss IVF nprobe search + rvc-nano weighting (pipeline.py vc(): index.search k=8, weight = (1/score)^2).
+import { AppError } from '../../shared/errors';
 import type { IvfIndex } from '../../formats/faiss';
 import type { Feats } from './features';
 
@@ -60,6 +61,7 @@ export function searchLabels(index: IvfIndex, q: Float32Array, n: number): { dis
 
 /** For every frame: weighted average of its k=8 nearest index vectors (the `npy` of pipeline.py). */
 export function searchIndex(feats: Feats, index: IvfIndex): Float32Array {
+  if (index.d !== feats.dim) throw new AppError('INDEX_DIM_MISMATCH', `index dimension ${index.d}, features ${feats.dim}`, undefined, true);
   const d = index.d, q = feats.data;
   const out = new Float32Array(q.length);
   const { cd, probe, dist, list, row } = scratch(index);

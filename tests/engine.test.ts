@@ -1,7 +1,11 @@
 // Engine plumbing without models: tiny fake registry served by a fake fetch, MemoryStore.
 import { describe, expect, it } from 'vitest';
-import { createEngine } from '../src/engine/engine';
+import { createEngine, type EngineDeps } from '../src/engine/engine';
+import type { Stages } from '../src/engine/run';
+import { changeRms } from '../src/dsp/rms';
 import { MemoryStore, sha256Hex } from '../src/models/store';
+import { AppError } from '../src/shared/errors';
+import { DEFAULT_CONVERT, DEFAULT_SEPARATE, type JobSpec, type Stereo } from '../src/shared/types';
 import type { Progress } from '../src/shared/types';
 import { fakeFlatIndex, fakeRvcPth, SIG_V2_F0_40K } from './helpers';
 
@@ -9,14 +13,15 @@ const enc = (s: string) => new TextEncoder().encode(s);
 const FILES: Record<string, Uint8Array> = {
   'rmvpe/rmvpe.onnx': enc('graph-bytes'), 'rmvpe/rmvpe.manifest.json': enc('{}'), 'rmvpe/rmvpe.pth': enc('w'.repeat(1000)),
   'contentvec/contentvec.onnx': enc('g2'), 'contentvec/contentvec.manifest.json': enc('{"a":1}'), 'contentvec/contentvec.pth': enc('x'.repeat(500)),
+  'uvr/uvr.onnx': enc('g3'), 'uvr/uvr.manifest.json': enc('{}'), 'uvr/uvr.pth': enc('u'), 'uvr/uvr.params.json': enc('{}'),
   'rvc/v2-f0-40k.onnx': enc('tpl'), 'rvc/v2-f0-40k.manifest.json': enc('{}'),
 };
 
-async function setup() {
+async function setup(stages?: EngineDeps['stages']) {
   const files: Record<string, { bytes: number; sha256: string }> = {};
   for (const [p, b] of Object.entries(FILES)) files[p] = { bytes: b.length, sha256: await sha256Hex(b.slice().buffer) };
   const m = (d: string) => ({ graph: `${d}/${d}.onnx`, manifest: `${d}/${d}.manifest.json`, weights: `${d}/${d}.pth` });
-  const registry = { format: 1, revision: 'r1', files, models: { rmvpe: m('rmvpe'), contentvec: m('contentvec') },
+  const registry = { format: 1, revision: 'r1', files, models: { rmvpe: m('rmvpe'), contentvec: m('contentvec'), 'uvr-hp-vocal': { ...m('uvr'), params: 'uvr/uvr.params.json' } },
     rvcTemplates: { [SIG_V2_F0_40K]: { id: 'v2-f0-40k', graph: 'rvc/v2-f0-40k.onnx', manifest: 'rvc/v2-f0-40k.manifest.json' } } };
   const fetchFn = (async (url: string | URL) => {
     const path = new URL(String(url)).pathname.replace(/^\/models\//, '');
@@ -24,7 +29,7 @@ async function setup() {
     return body ? new Response(body.slice()) : new Response(null, { status: 404 });
   }) as typeof fetch;
   const store = new MemoryStore();
-  const engine = createEngine({ store, fetch: fetchFn, registry: registry as never });
+  const engine = createEngine({ store, fetch: fetchFn, registry: registry as never, stages });
   const env = await engine.init({ backend: 'wasm', modelBaseUrl: 'http://x/models/' });
   return { engine, store, env };
 }
@@ -121,5 +126,119 @@ describe('engine (no models)', () => {
     const b = await store.read('a');
     await store.write('a', [enc('x')]);
     await expect(b.text()).rejects.toMatchObject({ name: 'NotReadableError' });
+  });
+});
+
+// R1 H4: run() orchestration with fake stages (no ONNX): F2 reuse keys, mode switches, retry, busy, cancel.
+describe('engine run (fake stages)', () => {
+  const calls = { separate: 0, f0: 0, features: 0, net: 0 };
+  let hook: { separate?: (ctx: Parameters<Stages['separate']>[2]) => Promise<void>; features?: () => void } = {};
+  const fake: Stages = {
+    async separate(audio, _agg, ctx) {
+      calls.separate++;
+      await hook.separate?.(ctx);
+      return { vocals: audio, instrumental: { sr: audio.sr, l: audio.l.map((x) => -x), r: audio.r } };
+    },
+    async f0(padded) { calls.f0++; return new Float64Array(Math.floor(padded.length / 160) + 1).fill(220); },
+    async features(chunks) {
+      calls.features++;
+      hook.features?.();
+      return chunks.map((c) => {
+        const frames = Math.floor(c.length / 320);
+        return { data: new Float32Array(frames * 768).fill(0.1), frames, dim: 768 as const };
+      });
+    },
+    async net(info) {
+      calls.net++;
+      return { info, backend: 'wasm', run: async (i) => new Float32Array(i.frames * 400).fill(0.1), release: async () => {} };
+    },
+  };
+
+  async function ready() {
+    for (const k of Object.keys(calls) as (keyof typeof calls)[]) calls[k] = 0;
+    hook = {};
+    const { engine } = await setup(fake);
+    await engine.download(['rmvpe', 'contentvec', 'uvr-hp-vocal', 'v2-f0-40k'], () => {});
+    const sr = 16000, n = 3 * sr;
+    const l = new Float32Array(n).map((_, i) => Math.sin(i / 20) * 0.3);
+    const audio: Stereo = { sr, l, r: l.slice() };
+    const inputId = await engine.setInput(audio, { name: 'a.wav', size: 1, lastModified: 1 });
+    const model = await engine.loadRvcModel(new File([await fakeRvcPth()], 'k.pth'));
+    const job = (o: Partial<JobSpec> = {}, c: Partial<JobSpec['convert']> = {}): JobSpec =>
+      ({ inputId, mode: 'song', separate: DEFAULT_SEPARATE, modelId: model.id, convert: { ...DEFAULT_CONVERT, ...c }, ...o });
+    return { engine, job };
+  }
+
+  it('reuses separate/f0/features for the same job; key and aggressiveness changes redo the right stages', async () => {
+    const { engine, job } = await ready();
+    const first = await engine.run(job(), () => {});
+    expect(first.reused).toEqual([]);
+    expect(first.converted.data.every(Number.isFinite)).toBe(true);
+    expect((await engine.run(job(), () => {})).reused).toEqual(['separate', 'f0', 'features']);
+    expect((await engine.run(job({}, { f0UpKey: 5 }), () => {})).reused).toEqual(['separate', 'f0', 'features']);
+    expect(calls).toMatchObject({ separate: 1, f0: 1, features: 1, net: 3 });
+    expect((await engine.run(job({ separate: { ...DEFAULT_SEPARATE, aggressiveness: 3 } }), () => {})).reused).toEqual([]);
+    expect(calls).toMatchObject({ separate: 2, f0: 2, features: 2 });
+  });
+
+  it('voice mode after song mode returns no stems (H2)', async () => {
+    const { engine, job } = await ready();
+    expect((await engine.run(job(), () => {})).instrumental).toBeDefined();
+    const v = await engine.run(job({ mode: 'voice' }), () => {});
+    expect(v.instrumental).toBeUndefined();
+    expect(v.vocals).toBeUndefined();
+  });
+
+  it('rejects an index of the wrong dimension before separating (H1)', async () => {
+    const { engine, job } = await ready();
+    const ix = await engine.loadIndex(new File([fakeFlatIndex(256, 4)], 'v1.index'));
+    await expect(engine.run(job({ indexId: ix.id }), () => {})).rejects.toMatchObject({ code: 'INDEX_DIM_MISMATCH' });
+    expect(calls.separate).toBe(0);
+  });
+
+  it('rejects ranges under 1 s (M3)', async () => {
+    const { engine, job } = await ready();
+    await expect(engine.run(job({ range: { start: 1, end: 1.3 } }), () => {})).rejects.toMatchObject({ detail: 'AUDIO_TOO_SHORT' });
+  });
+
+  it('retries once with the low chunk profile on OOM', async () => {
+    const { engine, job } = await ready();
+    let n = 0;
+    hook.features = () => { if (n++ === 0) throw new AppError('OOM', 'out of memory'); };
+    await engine.run(job(), () => {});
+    expect(calls.features).toBe(2);
+    hook.features = () => { throw new AppError('OOM', 'out of memory'); };
+    await expect(engine.run(job({ mode: 'voice' }), () => {})).rejects.toMatchObject({ code: 'OOM' });
+    expect(calls.features).toBe(4); // normal + exactly one low retry
+  });
+
+  it('BUSY while running, cancel() ends with CANCELLED', async () => {
+    const { engine, job } = await ready();
+    let release!: () => void;
+    hook.separate = (ctx) => new Promise<void>((r) => { release = r; }).then(() => ctx('wasm').throwIfCancelled());
+    const running = engine.run(job(), () => {});
+    await new Promise((r) => setTimeout(r, 0));
+    await expect(engine.run(job(), () => {})).rejects.toMatchObject({ code: 'BUSY' });
+    engine.cancel();
+    release();
+    await expect(running).rejects.toMatchObject({ code: 'CANCELLED' });
+    hook = {};
+    await expect(engine.run(job(), () => {})).resolves.toBeDefined(); // the next run starts uncancelled
+  });
+
+  it('MODELS_MISSING before download', async () => {
+    const { engine } = await setup(fake);
+    const id = await engine.setInput({ sr: 16000, l: new Float32Array(16000), r: new Float32Array(16000) }, { name: 'a', size: 1, lastModified: 1 });
+    const m = await engine.loadRvcModel(new File([await fakeRvcPth()], 'k.pth'));
+    await expect(engine.run({ inputId: id, mode: 'voice', separate: DEFAULT_SEPARATE, modelId: m.id, convert: DEFAULT_CONVERT }, () => {}))
+      .rejects.toMatchObject({ code: 'MODELS_MISSING' });
+  });
+});
+
+describe('dsp padding (M3)', () => {
+  it('changeRms stays finite on 0.3 s input (pad longer than the signal)', () => {
+    const a = new Float64Array(4800).map((_, i) => Math.sin(i / 7));
+    const b = new Float32Array(12000).map((_, i) => Math.sin(i / 9) * 0.5);
+    expect(changeRms(a, 16000, b, 40000, 0.25).every(Number.isFinite)).toBe(true);
   });
 });

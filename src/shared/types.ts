@@ -71,7 +71,11 @@ export interface ConvertParams {
   seed: number;
 }
 
-export interface SeparateParams { modelId: 'uvr-hp-vocal'; aggressiveness: number /* 0..20, default 10 */ }
+/** Ids of the fixed public models (DownloadItem.id, CacheEntry.id). RVC templates are public items too; their ids come from the registry. */
+export const PUBLIC_IDS = { contentvec: 'contentvec', rmvpe: 'rmvpe', separator: 'uvr-hp-vocal' } as const;
+export type PublicId = (typeof PUBLIC_IDS)[keyof typeof PUBLIC_IDS];
+
+export interface SeparateParams { modelId: typeof PUBLIC_IDS.separator; aggressiveness: number /* 0..20, default 10 */ }
 
 export interface JobSpec {
   inputId: string;
@@ -109,7 +113,7 @@ export interface ImportResult { name: string; path?: string; status: 'imported' 
 export const DEFAULT_CONVERT: ConvertParams = {
   f0UpKey: 0, indexRate: 0.75, protect: 0.33, rmsMixRate: 0.25, sid: 0, chunkProfile: 'normal', seed: 0,
 };
-export const DEFAULT_SEPARATE: SeparateParams = { modelId: 'uvr-hp-vocal', aggressiveness: 10 };
+export const DEFAULT_SEPARATE: SeparateParams = { modelId: PUBLIC_IDS.separator, aggressiveness: 10 };
 
 // ---- Engine API exposed by the worker (ARCHITECTURE §6.2); implemented in engine/engine.ts ----
 

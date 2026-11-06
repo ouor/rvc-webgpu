@@ -7,6 +7,7 @@ import type { RvcCheckpoint } from '../../formats/rvc-checkpoint';
 import type { OnnxInfo } from '../../formats/onnx-meta';
 import { createSession, ort, releaseSession, runSession } from '../../models/ort';
 import { createSessionFromParts, type Manifest } from '../../models/loader';
+import { featDim } from './features';
 
 export interface NetInput { phone: Float32Array; frames: number; pitch?: BigInt64Array; pitchf?: Float32Array; sid: number }
 
@@ -46,7 +47,7 @@ export async function createTemplateNet(
   return {
     info, backend: used,
     async run(i, rng) {
-      const T = i.frames, C = info.version === 'v1' ? 256 : 768;
+      const T = i.frames, C = featDim(info.version);
       if (i.sid < 0 || i.sid >= info.nSpk) throw new AppError('INTERNAL', `speaker id ${i.sid} out of range`);
       const feeds: Record<string, ort.Tensor> = {
         phone: new ort.Tensor('float32', i.phone, [1, T, C]),
@@ -119,7 +120,7 @@ export async function createOnnxNet(info: RvcModelInfo, model: Uint8Array, onnx:
   return {
     info, backend: used,
     async run(i, rng) {
-      const T = i.frames, C = info.version === 'v1' ? 256 : 768;
+      const T = i.frames, C = featDim(info.version);
       const feeds: Record<string, ort.Tensor> = {
         phone: fl('phone', i.phone, [1, T, C]),
         phone_lengths: new ort.Tensor('int64', BigInt64Array.of(BigInt(T)), [1]),

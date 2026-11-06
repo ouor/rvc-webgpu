@@ -2,6 +2,7 @@
 // pad_mode 'reflect' = librosa 0.9 behaviour that RVC/UVR were written against; tools/reference.py fixes the same
 // mode (meta.stftPadMode), librosa >= 0.10 would default to 'constant'.
 import { fftPlan } from './fft';
+import { padIndex, type PadMode } from './pad';
 
 /** Complex spectrogram, row-major [bin][frame] like numpy's (bins, frames). */
 export interface Spec { bins: number; frames: number; re: Float32Array; im: Float32Array }
@@ -17,14 +18,7 @@ export function hann(n: number): Float64Array {
   return w;
 }
 
-export type PadMode = 'reflect' | 'constant';
-
-/** numpy.pad index mapping for one reflection (pad < n), -1 for zero padding. */
-export function padIndex(j: number, n: number, mode: PadMode): number {
-  if (j >= 0 && j < n) return j;
-  if (mode === 'constant') return -1;
-  return j < 0 ? -j : 2 * (n - 1) - j;
-}
+export type { PadMode };
 
 export function stft(y: ArrayLike<number>, nFft: number, hop: number, mode: PadMode = 'reflect'): Spec {
   const pad = nFft >> 1;

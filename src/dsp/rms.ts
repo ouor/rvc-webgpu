@@ -1,5 +1,5 @@
 // librosa.feature.rms (center=True) and rvc-nano pipeline.py change_rms(). Pad mode: see stft.ts.
-import { padIndex, type PadMode } from './stft';
+import { padIndex, type PadMode } from './pad';
 
 export function rmsFrames(y: ArrayLike<number>, frameLength: number, hop: number, mode: PadMode = 'reflect'): Float64Array {
   const pad = Math.floor(frameLength / 2);
