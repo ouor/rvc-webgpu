@@ -7,6 +7,7 @@ import { HelpTip, SliderField, SwitchRow } from './Field';
 import { OptionsFields } from './Options';
 import { AudioPlayer, PlayButton, Waveform, bufferPeaks, seek, toggle, usePlayer } from './Player';
 import { DEFAULT_MIX } from '@/audio/mixer';
+import { REVERB_SECONDS } from '@/audio/reverb';
 import type { AudioFormat } from '@/audio/wav';
 import { abLabel, changedKeys, effectiveMix, estimateRun, fmtBytes, fmtEta, fmtSigned, fmtTime, fmtWhen, formatChanges, type RunStage, type StemKind } from '../lib/format';
 import { useShallow } from 'zustand/react/shallow';
@@ -142,7 +143,7 @@ function Hero({ result, cur }: { result: Result; cur: Result }) {
         <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-5">
           {gain('vocal')}
           {gain('inst')}
-          <SliderField label={t('mix.reverb')} help={t('mix.reverbHelp')} value={Math.round(mix.reverb * 100)} onChange={(v) => setMix({ reverb: v / 100 })} min={0} max={100} step={1} unit="%" defaultValue={0} valueText={(v) => `${v}%`} />
+          <SliderField label={t('mix.reverb')} help={t('mix.reverbHelp', { s: REVERB_SECONDS })} value={Math.round(mix.reverb * 100)} onChange={(v) => setMix({ reverb: v / 100 })} min={0} max={100} step={1} unit="%" defaultValue={0} valueText={(v) => `${v}%`} />
         </div>
         <p className="text-caption text-muted-foreground mt-3">{t('mix.note')}<br />{t('mix.note2')}</p>
       </>}
@@ -224,18 +225,18 @@ function Files({ cur }: { cur: Result }) {
   const t = useT();
   const song = cur.mode !== 'voice';
   const { format, align } = useApp(useShallow((s) => ({ format: s.format, align: s.align })));
-  const [zipping, setZipping] = useState(false);
+  const [zipping, setZipping] = useState<number>(); // percent while building
   const seconds = (cur.inst ?? cur.converted).duration;
   const files = 1 + (cur.vocals ? 1 : 0) + (cur.inst ? 2 : 0);
   const zipSize = fileBytes(align && cur.opts.range && cur.sourceSeconds ? cur.sourceSeconds : seconds, format) * files;
-  const zip = async () => { setZipping(true); try { await exportAll(cur); } finally { setZipping(false); } };
+  const zip = async () => { setZipping(0); try { await exportAll(cur, (d, n) => setZipping(Math.floor((d / n) * 100))); } finally { setZipping(undefined); } };
   return (
     <section className="rounded-2xl bg-card shadow-card p-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h2 className="text-h2">{t('res.files')}</h2>
         {files > 1 && (
-          <Button variant="secondary" size="sm" disabled={zipping} onClick={() => void zip()}>
-            {zipping ? <><Loader2 className="animate-spin" />{t('res.zipping')}</> : <><FileArchive />{t('res.zip')} <span className="font-normal text-muted-foreground tnum">· {t('dl.about', { size: fmtBytes(zipSize) })}</span></>}
+          <Button variant="secondary" size="sm" disabled={zipping !== undefined} onClick={() => void zip()}>
+            {zipping !== undefined ? <><Loader2 className="animate-spin" /><span className="tnum">{t('res.zipping', { p: zipping })}</span></> : <><FileArchive />{t('res.zip')} <span className="font-normal text-muted-foreground tnum">· {t('dl.about', { size: fmtBytes(zipSize) })}</span></>}
           </Button>
         )}
       </div>

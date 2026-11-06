@@ -231,6 +231,7 @@ function StepItem({ k, info, cancelling, rerunKeyOnly }: { k: Step; info: StepIn
   let line: ReactNode;
   if (active && cancelling) line = t('step.stopping');
   else if (info.state === 'load') line = t('step.loading', { m: t(`step.model.${k}`) });
+  else if (info.state === 'run' && !info.total) line = t('step.analyzing');
   else if (info.state === 'run') line = k === 'separate' ? t('step.patch', { n: info.done, m: info.total, p: pct }) : t('step.chunk', { n: info.done, m: info.total, p: pct });
   else if (info.state === 'done') line = info.ms ? t('step.doneIn', { t: fmtTime(info.ms / 1000) }) : t('step.done');
   else if (info.state === 'reused') line = k === 'f0' && rerunKeyOnly ? t('step.reusedKey') : t('step.reused');

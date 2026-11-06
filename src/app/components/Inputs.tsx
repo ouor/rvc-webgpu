@@ -9,7 +9,7 @@ import { Dropzone, pickFiles } from './Dropzone';
 import { HelpTip, Segmented, StepCard } from './Field';
 import { InlineError, NoticeButton } from './Notice';
 import { AudioPlayer, usePlayer } from './Player';
-import { AUDIO_ACCEPT, INDEX_ACCEPT, MODEL_ACCEPT, fmtBytes, fmtHz, fmtModelSize, fmtTime, indexBytes } from '../lib/format';
+import { AUDIO_ACCEPT, INDEX_ACCEPT, MODEL_ACCEPT, fmtBytes, fmtHz, fmtModelSize, fmtTime, fmtWhen, indexBytes } from '../lib/format';
 import { cn } from '../lib/utils';
 import { clearBacking, clearIndex, clearModel, clearSong, openMyModel, openSettings, saveMine, setOnnxSr, setOpts, tryClip } from '../controller';
 import { selBusy, useApp, type Song } from '../store';
@@ -131,11 +131,12 @@ function MyModelPicker() {
               {list.map((m) => {
                 const total = sizes?.find((e) => e.id === m.id)?.bytes ?? m.bytes;
                 return (
-                  <CommandItem key={m.id} value={`${m.name} ${m.id}`} onSelect={() => { setOpen(false); void openMyModel(m.id); }} className="flex items-center gap-2">
+                  <CommandItem key={m.id} value={`${m.name} ${m.memo ?? ''} ${m.id}`} onSelect={() => { setOpen(false); void openMyModel(m.id); }} className="flex items-center gap-2">
                     <MicVocal className="size-4 text-stem-vocal shrink-0" />
                     <span className="flex-1 min-w-0">
                       <span className="block truncate font-semibold">{m.name}</span>
-                      <span className="block text-caption text-muted-foreground tnum truncate">{fmtModelSize(t, m.bytes, m.indexId ? total - m.bytes : undefined)}</span>
+                      {m.memo && <span className="block text-caption text-muted-foreground truncate">{m.memo}</span>}
+                      <span className="block text-caption text-muted-foreground tnum truncate">{fmtModelSize(t, m.bytes, m.indexId ? total - m.bytes : undefined)} · {fmtWhen(t, m.lastUsed || m.savedAt)}</span>
                     </span>
                   </CommandItem>
                 );

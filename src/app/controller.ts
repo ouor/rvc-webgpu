@@ -603,7 +603,7 @@ export async function exportStem(kind: StemKind, r = currentResult()) {
 }
 
 /** I-13: the mix and every stem in the chosen format plus settings.txt, in one STORE zip built in the export worker. */
-export async function exportAll(r = currentResult()) {
+export async function exportAll(r = currentResult(), onProgress?: (done: number, total: number) => void) {
   if (!r) return;
   try {
     const s = get();
@@ -614,7 +614,7 @@ export async function exportAll(r = currentResult()) {
     if (c.stems.vocals) files.push({ name: fileName(r, 'vocals'), audio: c.stems.vocals, scale: c.scale });
     if (c.stems.instrumental) files.push({ name: fileName(r, 'inst'), audio: c.stems.instrumental, scale: c.scale });
     const text = settingsText({ ...r, version, format: s.format, mix: s.mix, mute: s.mute, scale: s.format === 'f32' ? 1 : c.scale, aligned: aligned(r) });
-    const zip = await exporter.zip([...files, { name: 'settings.txt', text }], s.format);
+    const zip = await exporter.zip([...files, { name: 'settings.txt', text }], s.format, onProgress);
     const name = zipName(r.songName, r.modelName);
     download(new File([zip], name, { type: 'application/zip' }), name);
     markSaved(r);
@@ -780,6 +780,12 @@ export async function renameMine(id: string, name: string) {
   try { await engine.myModels.rename(id, name); } catch (e) { return void toast.error(t('toast.renameFailed'), reason(e)); }
   const m = get().model;
   if (m?.info?.id === id) set({ model: { ...m, info: { ...m.info, name } } });
+  void refreshLists();
+}
+
+/** I-10: one-line note per saved model (the engine trims it). */
+export async function setMemoMine(id: string, memo: string) {
+  try { await engine.myModels.setMemo(id, memo); } catch (e) { return void toast.error(t('toast.memoFailed'), reason(e)); }
   void refreshLists();
 }
 

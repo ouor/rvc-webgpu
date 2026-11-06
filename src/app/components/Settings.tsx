@@ -8,7 +8,7 @@ import type { BackendPref, CacheEntry, SavedModel } from '@/shared/types';
 import { fmtBytes, fmtHz, fmtModelSize, fmtWhen, hostOf } from '../lib/format';
 import { roleOf } from '../lib/catalog';
 import { cn } from '../lib/utils';
-import { clearCache, copyEnvInfo, importCache, openMyModel, openSettings, removeCacheItem, removeMine, removeRecent, renameMine, setBackend, setModelBaseUrl, showNoticeAgain, updateSettings, verifyCacheItem } from '../controller';
+import { clearCache, copyEnvInfo, importCache, openMyModel, openSettings, removeCacheItem, removeMine, removeRecent, renameMine, setMemoMine, setBackend, setModelBaseUrl, showNoticeAgain, updateSettings, verifyCacheItem } from '../controller';
 import { DEFAULT_BASE_URL, selEngineBusy, selModelBaseUrl, useApp, type SettingsTab } from '../store';
 import { useT } from '../i18n';
 import { version } from '../../../package.json';
@@ -28,15 +28,15 @@ function StatusChip({ status }: { status: CacheEntry['status'] | 'checking' }) {
   );
 }
 
-function RenameInput({ name, onDone }: { name: string; onDone: (name?: string) => void }) {
-  const t = useT();
-  const [v, setV] = useState(name);
+/** Inline edit: Enter or blur saves, Escape cancels (DESIGN 9.5). */
+function InlineInput({ value, label, max, placeholder, memo, onDone }: { value: string; label: string; max: number; placeholder?: string; memo?: boolean; onDone: (v?: string) => void }) {
+  const [v, setV] = useState(value);
   const ended = useRef(false); // Escape then the unmount blur must not commit
   const end = (n?: string) => { if (!ended.current) { ended.current = true; onDone(n); } };
   return (
-    <input autoFocus value={v} maxLength={80} aria-label={t('mine.rename')} onChange={(e) => setV(e.target.value)} onFocus={(e) => e.target.select()}
+    <input autoFocus value={v} maxLength={max} aria-label={label} placeholder={placeholder} onChange={(e) => setV(e.target.value)} onFocus={(e) => e.target.select()}
       onBlur={() => end(v.trim())} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.stopPropagation(); end(); } }}
-      className="w-full h-7 rounded-md border border-input bg-card px-2 text-small font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+      className={cn('w-full h-7 rounded-md border border-input bg-card px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', memo ? 'text-caption' : 'text-small font-semibold')} />
   );
 }
 
@@ -187,7 +187,7 @@ function Models() {
   const lang = useApp((s) => s.settings.lang);
   const entries = useApp((s) => s.cache?.entries);
   const list = useApp((s) => s.myModels);
-  const [editing, setEditing] = useState<string>();
+  const [editing, setEditing] = useState<{ id: string; memo?: boolean }>();
   return (
     <div>
       <h3 className={h3}>{t('set.mineTitle')}</h3>
@@ -198,11 +198,16 @@ function Models() {
             <li key={m.id} className="flex items-center gap-3 py-3">
               <span className="grid place-items-center size-9 rounded-lg bg-stem-vocal/15 text-stem-vocal shrink-0"><MicVocal className="size-4" /></span>
               <div className="flex-1 min-w-0">
-                {editing === m.id
-                  ? <RenameInput name={m.name} onDone={async (name) => { setEditing(undefined); if (name && name !== m.name) await renameMine(m.id, name); }} />
+                {editing?.id === m.id && !editing.memo
+                  ? <InlineInput value={m.name} label={t('mine.rename')} max={80} onDone={async (name) => { setEditing(undefined); if (name && name !== m.name) await renameMine(m.id, name); }} />
                   : <p className="text-small font-semibold flex items-center gap-1 min-w-0"><span className="truncate">{m.name}</span>
-                      <button type="button" disabled={busy} className="grid place-items-center size-6 shrink-0 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" aria-label={t('mine.rename')} title={t('mine.rename')} onClick={() => setEditing(m.id)}><Pencil className="size-3.5" /></button>
+                      <button type="button" disabled={busy} className="grid place-items-center size-6 shrink-0 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" aria-label={t('mine.rename')} title={t('mine.rename')} onClick={() => setEditing({ id: m.id })}><Pencil className="size-3.5" /></button>
                     </p>}
+                {editing?.id === m.id && editing.memo
+                  ? <InlineInput memo value={m.memo ?? ''} label={t('mine.memo')} placeholder={t('mine.memoAdd')} max={60} onDone={async (memo) => { setEditing(undefined); if (memo !== undefined && memo !== (m.memo ?? '')) await setMemoMine(m.id, memo); }} />
+                  : <button type="button" disabled={busy} onClick={() => setEditing({ id: m.id, memo: true })}
+                      className={cn('block max-w-full truncate text-left text-caption rounded-sm hover:underline disabled:no-underline', m.memo ? 'text-foreground' : 'text-accent-foreground')}
+                      title={t('mine.memoEdit')}>{m.memo || t('mine.memoAdd')}</button>}
                 <p className="text-caption text-muted-foreground">{[m.source === 'onnx' && 'ONNX', m.version, fmtHz(m.sr), m.f0 ? t('model.f0') : t('model.nof0'), !m.indexId && t('set.noIndex'), (m.lastUsed || m.savedAt) > 0 && t('mine.lastUsed', { d: fmtDate(m.lastUsed || m.savedAt, lang) })].filter(Boolean).join(' · ')}</p>
               </div>
               <span className="text-caption text-muted-foreground tnum text-right">{fmtModelSize(t, m.bytes, sizeOfIndex(m, entries))}</span>
