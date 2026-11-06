@@ -1,4 +1,6 @@
 // UI strings (ET-4: ko default, en). Engine errors are shown by code (ENGINE_API §6), never by their English message.
+// Not translated: product, backend, file-format and model names (Web RVC, WebGPU, WASM, WAV, MP3, RMVPE, UVR, ContentVec).
+// Option names are translated, also in short labels. Toast text is fixed in the language active when it was shown.
 import type { AppError } from '@/shared/errors';
 import { get, useApp } from './store';
 
@@ -294,13 +296,13 @@ const en: Record<Key, string> = {
 
 const dict = { ko: ko as Record<string, string>, en: en as Record<string, string> };
 export type Vars = Record<string, string | number>;
-export type T = (key: string, vars?: Vars) => string;
+export type T = (key: Key, vars?: Vars) => string;
 
 const fill = (s: string, v?: Vars) => (v ? s.replace(/\{(\w+)\}/g, (_, k) => String(v[k] ?? `{${k}}`)) : s);
 
-/** Non-hook lookup (controller, toasts). Keys are dynamic in a few places (`step.${k}`), hence string. */
+/** Non-hook lookup (controller, toasts). Dynamic keys (`step.${k}`) are template literal types, so a missing key is a type error. */
 export const t: T = (key, vars) => {
-  const s = dict[get().settings.lang][key] ?? ko[key as Key];
+  const s = dict[get().settings.lang][key] ?? ko[key];
   if (s === undefined && import.meta.env.DEV) console.warn('i18n: missing key', key);
   return fill(s ?? key, vars);
 };
@@ -311,6 +313,5 @@ export function useT(): T {
 }
 
 export function errText(e: AppError) {
-  const k = `err.${e.code}`;
-  return { title: t(`${k}.title`), body: t(`${k}.body`) };
+  return { title: t(`err.${e.code}.title`), body: t(`err.${e.code}.body`) };
 }

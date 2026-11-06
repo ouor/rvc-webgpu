@@ -179,7 +179,7 @@ function Models() {
                   : <p className="text-small font-semibold flex items-center gap-1 min-w-0"><span className="truncate">{m.name}</span>
                       <button type="button" disabled={busy} className="grid place-items-center size-6 shrink-0 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" aria-label={t('mine.rename')} title={t('mine.rename')} onClick={() => setEditing(m.id)}><Pencil className="size-3.5" /></button>
                     </p>}
-                <p className="text-caption text-muted-foreground">{[m.source === 'onnx' && 'ONNX', m.version, fmtHz(m.sr), m.f0 ? t('model.f0') : t('model.nof0'), m.indexId ? (m.index ? t('mine.indexN', { n: m.index.nVectors.toLocaleString() }) : 'index') : t('set.noIndex'), (m.lastUsed || m.savedAt) > 0 && t('mine.lastUsed', { d: fmtDate(m.lastUsed || m.savedAt, lang) })].filter(Boolean).join(' · ')}</p>
+                <p className="text-caption text-muted-foreground">{[m.source === 'onnx' && 'ONNX', m.version, fmtHz(m.sr), m.f0 ? t('model.f0') : t('model.nof0'), m.indexId ? (m.index ? t('mine.indexN', { n: m.index.nVectors.toLocaleString() }) : t('opt.indexShort')) : t('set.noIndex'), (m.lastUsed || m.savedAt) > 0 && t('mine.lastUsed', { d: fmtDate(m.lastUsed || m.savedAt, lang) })].filter(Boolean).join(' · ')}</p>
               </div>
               <span className="text-caption text-muted-foreground tnum">{fmtBytes(entries?.find((e) => e.id === m.id)?.bytes ?? m.bytes)}</span>
               <Button variant="secondary" size="sm" disabled={busy} onClick={() => void openMyModel(m.id)}>{t('set.use')}</Button>

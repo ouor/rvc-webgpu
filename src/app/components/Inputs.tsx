@@ -105,7 +105,7 @@ function MyModelPicker() {
                 <CommandItem key={m.id} value={`${m.name} ${m.id}`} onSelect={() => { setOpen(false); void openMyModel(m.id); }} className="flex items-center gap-2">
                   <MicVocal className="size-4 text-stem-vocal" />
                   <span className="flex-1 truncate">{m.name}</span>
-                  <span className="text-caption text-muted-foreground">{m.version} · {m.sr / 1000}k{m.indexId ? ' · index' : ''}</span>
+                  <span className="text-caption text-muted-foreground">{m.version} · {m.sr / 1000}k{m.indexId ? ` · ${t('opt.indexShort')}` : ''}</span>
                 </CommandItem>
               ))}
             </CommandGroup>
