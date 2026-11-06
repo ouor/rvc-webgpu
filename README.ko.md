@@ -42,6 +42,8 @@ VITE_MODEL_BASE_URL=https://huggingface.co/trolley/rvc-webgpu/resolve/0afdab8832
 
 `npm test`, `npm run lint`, `npm run build`로 검사하고 빌드합니다. GitHub Pages 프로젝트 사이트로 빌드할 때는 `BASE_PATH=/<repo>/`를 지정하세요.
 
+엔진만 가져다 쓰는 방법: [docs/engine.md](docs/engine.md)(영어).
+
 ## 모델
 
 공용 모델(ContentVec, RMVPE, UVR, RVC 합성기 그래프)은 [huggingface.co/trolley/rvc-webgpu](https://huggingface.co/trolley/rvc-webgpu)에 있습니다. [tools/](tools/README.md)로 원본 체크포인트에서 다시 만들 수 있습니다.

@@ -42,6 +42,8 @@ VITE_MODEL_BASE_URL=https://huggingface.co/trolley/rvc-webgpu/resolve/0afdab8832
 
 `npm test`, `npm run lint` and `npm run build` check and build the app. Set `BASE_PATH=/<repo>/` when building for a GitHub Pages project site.
 
+Using the engine on its own: [docs/engine.md](docs/engine.md).
+
 ## Models
 
 The shared models (ContentVec, RMVPE, UVR, RVC synthesizer graphs) are hosted at [huggingface.co/trolley/rvc-webgpu](https://huggingface.co/trolley/rvc-webgpu). [tools/](tools/README.md) rebuilds them from the original checkpoints.
