@@ -119,9 +119,7 @@ def check_rvc():
 
     def run(tid, tpl, f0, upp, T, sd, sr, label):
         sess = load_session(dist("rvc", tid + ".onnx"), dist("rvc", tid + ".manifest.json"), sd)
-        x = example_inputs(tid[:2], f0, upp, T=T, seed=T)
-        if f0:
-            x["pitchf"] = x["pitchf"] * 0 if label.endswith("f0=0") else x["pitchf"]
+        x = example_inputs(tid[:2], f0, upp, sr, T=T, seed=T, f0_zero=label.endswith("f0=0"))
         with torch.no_grad():
             t = tpl(*x.values()).numpy()
         o = sess.run(None, {k: v.numpy() for k, v in x.items()})[0]
@@ -146,6 +144,49 @@ def check_rvc():
             run("v2-f0-40k", tpl, 1, 400, 333, cpt["weight"], 40000, f"{name} {label}")
 
 
+def check_rvc_long():
+    """Long voiced chunks (>= 30 s) through v2-f0-40k + kyubey: output pitch must follow pitchf (AC-2 >= 0.95)."""
+    from export_rvc_templates import build_net, make_template, sine_phase
+    from reference import quantize_f0, resample
+    from rmvpe import RMVPE
+
+    d = os.path.join(REFERENCE, "bunnygirl-rvc-kyubey")
+    case = json.load(open(os.path.join(d, "case.json")))
+    arr = lambda k: np.fromfile(os.path.join(d, k + ".bin"), dtype={**case["inputs"], **case["outputs"]}[k]["dtype"])
+    cpt = torch.load(os.path.join(WEIGHTS_IN, "rvc-kyubey.pth"), map_location="cpu", weights_only=True)
+    net = build_net("v2", 1, cpt["config"], cpt["weight"])
+    tpl, sess = make_template(net, 1), load_session(dist("rvc", "v2-f0-40k.onnx"), dist("rvc", "v2-f0-40k.manifest.json"), cpt["weight"])
+    rm = RMVPE(os.path.join(WEIGHTS_IN, "rmvpe.pt"), is_half=False, device="cpu")
+    feats = arr("feats").reshape(-1, 768)
+
+    ch = case["meta"]["chunks"][0]  # first song chunk (~40 s, as rvc-nano cuts it)
+    T = ch["T"]
+    f0a = ch["f0Frames"][0]
+    real = (np.repeat(feats[: ch["featFrames"]], 2, axis=0)[:T], arr("pitch")[f0a: f0a + T], arr("pitchf")[f0a: f0a + T])
+    t = np.arange(4000) / 100  # synthetic 40 s, voiced throughout: 220 Hz glide with vibrato
+    pf = (220 * 2 ** (t / 40 + 0.05 * np.sin(2 * np.pi * 5.5 * t))).astype(np.float32)
+    synth = (np.repeat(feats[:2000], 2, axis=0), quantize_f0(pf, 0)[0], pf)
+    rng = np.random.default_rng(7)
+    for label, (phone, pitch, pitchf) in (("song chunk0", real), ("synthetic voiced", synth)):
+        T = len(pitchf)
+        x = {"phone": phone[None].astype(np.float32), "phone_lengths": np.array([T]), "pitch": pitch[None].astype(np.int64),
+             "pitchf": pitchf[None], "g": net.emb_g.weight[0].detach().numpy()[None, :, None],
+             "rnd": rng.standard_normal((1, 192, T), dtype=np.float32),
+             "noise": rng.standard_normal((1, T * 400, 1), dtype=np.float32),
+             "phase": sine_phase(pitchf, 400, 40000)[None, :, None]}
+        with torch.no_grad():
+            ref = tpl(*[torch.from_numpy(v) for v in x.values()]).numpy()[0, 0]
+        out = sess.run(None, x)[0][0, 0]
+        corr = {}
+        for name, y in (("torch", ref), ("ort", out)):
+            got = rm.infer_from_audio(resample(y, 40000, 16000).astype(np.float32))[:T]
+            v = (pitchf[: len(got)] > 0) & (got > 0)
+            corr[name] = float(np.corrcoef(np.log(pitchf[: len(got)][v]), np.log(got[v]))[0, 1])
+        report(f"v2-f0-40k kyubey {label} T={T}", seconds=T / 100, snr=snr_db(ref, out),
+               logmel_l1=float(np.abs(logmel(ref, 40000) - logmel(out, 40000)).mean()),
+               pitch_corr_torch=corr["torch"], pitch_corr_ort=corr["ort"], ok=corr["ort"] >= 0.95)
+
+
 def check_pth_reader():
     """17.3: public .pth files must pass the browser allowlist reader (spikes/pth-reader.mjs)."""
     reader = os.path.join(ROOT, "docs", "dev", "architecture", "spikes", "pth-reader.mjs")
@@ -160,7 +201,7 @@ def check_pth_reader():
 
 
 if __name__ == "__main__":
-    checks = {"contentvec": check_contentvec, "rmvpe": check_rmvpe, "uvr": check_uvr, "rvc": check_rvc,
+    checks = {"contentvec": check_contentvec, "rmvpe": check_rmvpe, "uvr": check_uvr, "rvc": check_rvc, "rvc-long": check_rvc_long,
               "pth": check_pth_reader}
     for name in sys.argv[1:] or checks:
         checks[name]()

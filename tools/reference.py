@@ -7,6 +7,7 @@ Writes 17.6 fixture cases under weights/reference/:
 Torch fp32 everywhere (TF32 off). Deviations from the originals, same as the JS engine will do:
   * every resample is scipy.signal.resample_poly (VR synthesis used sinc_fastest/scipy FFT, rvc-nano ffmpeg)
   * rnd / noise come from numpy default_rng(seed), saved so the TS side can inject the same arrays
+  * the NSF sine phase is computed in float64 (export_rvc_templates.sine_phase), not by an fp32 cumsum
   * librosa >= 0.10 changed stft/rms default pad_mode to 'constant'; we pass 'reflect' = librosa 0.9.1
     (the version RVC 2.2.231006 and rvc-nano pinned)
 """
@@ -24,7 +25,7 @@ from scipy import signal
 
 from common import REFERENCE, VENDOR, WEIGHTS_IN, ROOT, write_case
 from export_hubert import load_contentvec
-from export_rvc_templates import build_net, make_template
+from export_rvc_templates import build_net, make_template, sine_phase
 from export_uvr import PARAMS_JSON, load_uvr
 from rmvpe import RMVPE
 from uvr import spec_utils
@@ -203,7 +204,8 @@ class Rvc:
             w = torch.where(pf > 0, 1.0, protect)  # pitchf > 0 -> 1, pitchf < 1 -> protect (pitchf is 0 or >= 50)
             x = x * w[..., None] + x0 * (1 - w[..., None])
         args = [x, torch.tensor([T]), torch.from_numpy(pitch)[None], pf, self.emb_g[sid][None, :, None],
-                torch.from_numpy(rnd[:, :T])[None], torch.from_numpy(noise[: T * self.upp])[None, :, None]]
+                torch.from_numpy(rnd[:, :T])[None], torch.from_numpy(noise[: T * self.upp])[None, :, None],
+                torch.from_numpy(sine_phase(pitchf, self.upp, self.sr))[None, :, None]]
         with torch.no_grad():
             return self.tpl(*[a.to(DEV) for a in args])[0, 0].cpu().numpy(), T
 
@@ -318,6 +320,7 @@ def main():
                 "nprobe": int(faiss.extract_index_ivf(rvc.index).nprobe) if rvc.index else None,
                 "vocal16kFrom": "mean(vocals44k) -> resample_poly(160, 441) -> /max(1, peak/0.95)",
                 "rnd/noise": "numpy default_rng(seed): per chunk rnd [192,T] then noise [T*upp]; concatenated",
+                "phase": "per chunk sine_phase(pitchf[chunk][:T], upp, modelSr), float64, restarts at 0 (not saved)",
                 "featsLayout": "HuBERT 50fps per chunk, concatenated in chunk order (chunks[i].featFrames rows)",
                 "rawLayout": "per chunk synth output with t_pad_tgt trimmed, concatenated (before change_rms)"})
     print("convert:", {k: v.shape for k, v in outputs.items()})

@@ -100,10 +100,8 @@ def rvc_template_cases(out):
     net = build_net("v2", 1, cpt["config"], cpt["weight"])
     tpl = make_template(net, 1)
     for name, zero in (("rvc-template-v2-f0-40k", False), ("rvc-template-v2-f0-40k-f0zero", True)):
-        x = example_inputs("v2", 1, 400, T=200, seed=0)
+        x = example_inputs("v2", 1, 400, 40000, T=200, seed=0, f0_zero=zero)
         x["g"] = net.emb_g.weight[0].detach()[None, :, None]
-        if zero:
-            x["pitchf"] = torch.zeros_like(x["pitchf"])
         with torch.no_grad():
             audio = tpl(*x.values()).numpy()
         write_case(os.path.join(out, name), SRC, {k: v.numpy() for k, v in x.items()}, {"audio": audio},
